@@ -212,6 +212,7 @@ where
             break result;
         } else {
             log::error!("Retry #{}: failed to upload metric: {:?}", count + 1, result);
+            sleep(Duration::from_secs(15));
             if count > 5 {
                 break result;
             }
