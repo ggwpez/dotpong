@@ -89,6 +89,9 @@ async fn send_tx(tx: &TransactionConfig, sk: &Secrets) -> Result<TxTiming> {
     while let Some(status) = subscription.next().await {
         match status? {
             InBestBlock(_) => {
+                if inclusion.is_some() {
+                    continue;
+                }
                 inclusion = Some(start.elapsed());
                 log::info!("TX included after {} ms", inclusion.unwrap().as_millis());
             }
