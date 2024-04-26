@@ -90,6 +90,7 @@ async fn send_tx(tx: &TransactionConfig, sk: &Secrets) -> Result<TxTiming> {
         match status? {
             InBestBlock(_) => {
                 if inclusion.is_some() {
+                    log::warn!("TX included multiple times; fork?");
                     continue;
                 }
                 inclusion = Some(start.elapsed());
@@ -105,7 +106,8 @@ async fn send_tx(tx: &TransactionConfig, sk: &Secrets) -> Result<TxTiming> {
             Validated | Broadcasted { .. } | NoLongerInBestBlock => {}
             status => {
                 log::error!("Unexpected status: {:?}", status);
-                anyhow::bail!("Unexpected status: {:?}", status);
+                inclusion = Some(inclusion.unwrap_or(Duration::from_secs(60)));
+                finalization = Some(finalization.unwrap_or(Duration::from_secs(60)));
             }
         }
     }
