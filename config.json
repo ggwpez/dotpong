@@ -1,6 +1,6 @@
 {
 	"page": "clvgrqiia48198b6oqxfkkt7tb",
-	"interval_sec": 120,
+	"interval_sec": 600,
 	"transactions": [
 		{
 			"rpc": "wss://rococo-asset-hub-rpc.polkadot.io",

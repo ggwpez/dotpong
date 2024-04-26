@@ -49,15 +49,15 @@ async fn main() -> Result<()> {
     let config = load_config()?;
 
     loop {
+        log::info!("Sleeping for {} seconds until next round-robin", config.interval_sec);
+        sleep(Duration::from_secs(config.interval_sec as u64));
+
         for tx in config.transactions.iter() {
             let timing = retry(|| send_tx(&tx, &config.secrets)).await?;
             log::info!("TX to {} took {:?}", tx.rpc, timing);
             timing.upload(&config, &tx.metrics).await?;
             sleep(Duration::from_secs(5));
         }
-
-        log::info!("Sleeping for {} seconds until next round-robin", config.interval_sec);
-        sleep(Duration::from_secs(config.interval_sec as u64));
     }
 }
 
