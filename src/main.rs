@@ -27,7 +27,9 @@ struct NetworkConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Metric {
+    /// Metric ID for included TX.
     inclusion: String,
+    /// Metric ID for finalized TX.
     finalization: String,
 }
 
