@@ -7,18 +7,20 @@ use subxt::{tx::TxStatus::*, OnlineClient, SubstrateConfig};
 use subxt_signer::{sr25519::Keypair, SecretUri};
 use core::future::Future;
 use std::thread::sleep;
+use std::time::{Instant, SystemTime};
+use subxt::lightclient::LightClient;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     page: String,
-    transactions: Vec<TransactionConfig>,
+    networks: Vec<NetworkConfig>,
     #[serde(skip)]
     secrets: Secrets,
     interval_sec: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct TransactionConfig {
+struct NetworkConfig {
     rpc: String,
     metrics: Metric,
 }
@@ -44,15 +46,21 @@ struct TxTiming {
     finalization: Duration,
 }
 
+#[derive(Debug)]
+struct SyncTiming {
+    when: i64,
+    warp: Duration,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = load_config()?;
 
     loop {
-        for tx in config.transactions.iter() {
-            let timing = retry(|| send_tx(&tx, &config.secrets)).await?;
-            log::info!("TX to {} took {:?}", tx.rpc, timing);
-            timing.upload(&config, &tx.metrics).await?;
+        for net in config.networks.iter() {
+            let timing = retry(|| send_tx(&net, &config.secrets)).await?;
+            log::info!("TX to {} took {:?}", net.rpc, timing);
+            timing.upload(&config, &net.metrics).await?;
             sleep(Duration::from_secs(5));
         }
 
@@ -61,7 +69,25 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn send_tx(tx: &TransactionConfig, sk: &Secrets) -> Result<TxTiming> {
+// TODO use
+async fn sync(_tx: &NetworkConfig) -> Result<SyncTiming> {
+    const POLKADOT_SPEC: &str = include_str!("../specs/polkadot-relay.json");
+
+    // curl -H "Content-Type: application/json" -d '{"id":1, "jsonrpc":"2.0", "method": "sync_state_genSyncSpec", "params":[true]}' https://rococo-rpc.polkadot.io | jq .result > chain_spec.json
+
+    log::info!("Starting Polkadot light client sync");
+    let when = unix_ms();
+    let now = Instant::now();
+    let (_lightclient, polkadot_rpc) = LightClient::relay_chain(POLKADOT_SPEC)?;
+    let _api = OnlineClient::<SubstrateConfig>::from_rpc_client(polkadot_rpc).await?;
+
+    Ok(SyncTiming {
+        when,
+        warp: now.elapsed(),
+    })
+}
+
+async fn send_tx(tx: &NetworkConfig, sk: &Secrets) -> Result<TxTiming> {
     let api = OnlineClient::<SubstrateConfig>::from_url(&tx.rpc).await?;
     let uri = SecretUri::from_str(&sk.substrate_uri)?;
     let keypair = Keypair::from_uri(&uri)?;
@@ -114,8 +140,8 @@ async fn send_tx(tx: &TransactionConfig, sk: &Secrets) -> Result<TxTiming> {
 
     Ok(TxTiming {
         when,
-        inclusion: inclusion.expect("Set"),
-        finalization: finalization.expect("Set"),
+        inclusion: inclusion.or(finalization).ok_or_else(|| anyhow::anyhow!("Not included"))?,
+        finalization: finalization.ok_or_else(|| anyhow::anyhow!("Not finalized"))?,
     })
 }
 
@@ -192,7 +218,7 @@ fn load_config() -> Result<Config> {
 }
 
 fn unix_ms() -> i64 {
-    std::time::SystemTime::now()
+    SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
@@ -211,7 +237,7 @@ where
         if result.is_ok() {
             break result;
         } else {
-            log::error!("Retry #{}: failed to upload metric: {:?}", count + 1, result);
+            log::error!("Retry #{} failed: {:?}", count + 1, result);
             sleep(Duration::from_secs(15));
             if count > 5 {
                 break result;
