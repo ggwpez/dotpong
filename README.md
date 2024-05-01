@@ -31,3 +31,7 @@ Modify the `config.json` with your metric and page IDs:
 The `metrics.py` script can be used to print all metric ids for your Page. It therefore needs the page-id in the config.
 
 Start it with: `cargo run --release`. Maybe you want to put that in an infinite loop, since its not 100% crash resistant.
+
+## License
+
+GPL-3.0 only, see [LICENSE](LICENSE). (C) Oliver Tale-Yazdi.
