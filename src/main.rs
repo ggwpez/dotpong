@@ -13,7 +13,7 @@ use subxt::lightclient::LightClient;
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     page: String,
-    networks: Vec<NetworkConfig>,
+    transactions: Vec<NetworkConfig>,
     #[serde(skip)]
     secrets: Secrets,
     interval_sec: u32,
@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     let config = load_config()?;
 
     loop {
-        for net in config.networks.iter() {
+        for net in config.transactions.iter() {
             let timing = retry(|| send_tx(&net, &config.secrets)).await?;
             log::info!("TX to {} took {:?}", net.rpc, timing);
             timing.upload(&config, &net.metrics).await?;
