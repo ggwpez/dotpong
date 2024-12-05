@@ -3,14 +3,14 @@
 	"interval_sec": 600,
 	"transactions": [
 		{
-			"rpc": "wss://rococo-rpc.polkadot.io",
+			"rpc": "wss://westend-rpc.polkadot.io",
 			"metrics": {
 				"inclusion": "clvh3hr9h35931bioklm18aqtg",
 				"finalization": "clvh3i8kr37310biokl2hmdzqi"
 			}
 		},
 		{
-			"rpc": "wss://rococo-asset-hub-rpc.polkadot.io",
+			"rpc": "wss://westend-asset-hub-rpc.polkadot.io",
 			"metrics": {
 				"inclusion": "clvh3h9gf34789biokm14v0554",
 				"finalization": "clvh3hlcb35510biokitusqybe"

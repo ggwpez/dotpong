@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     let config = load_config()?;
 
     loop {
-        for net in config.transactions.iter() {
+        for net in config.transactions.iter().skip(1) {
             let timing = retry(|| send_tx(&net, &config.secrets)).await?;
             log::info!("TX to {} took {:?}", net.rpc, timing);
             timing.upload(&config, &net.metrics).await?;
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
 
 // TODO use
 async fn sync(_tx: &NetworkConfig) -> Result<SyncTiming> {
-    const POLKADOT_SPEC: &str = include_str!("../specs/polkadot-relay.json");
+    /*const POLKADOT_SPEC: &str = include_str!("../specs/polkadot-relay.json");
 
     // curl -H "Content-Type: application/json" -d '{"id":1, "jsonrpc":"2.0", "method": "sync_state_genSyncSpec", "params":[true]}' https://rococo-rpc.polkadot.io | jq .result > chain_spec.json
 
@@ -86,7 +86,8 @@ async fn sync(_tx: &NetworkConfig) -> Result<SyncTiming> {
     Ok(SyncTiming {
         when,
         warp: now.elapsed(),
-    })
+    })*/
+    todo!()
 }
 
 async fn send_tx(tx: &NetworkConfig, sk: &Secrets) -> Result<TxTiming> {
@@ -94,7 +95,7 @@ async fn send_tx(tx: &NetworkConfig, sk: &Secrets) -> Result<TxTiming> {
     let uri = SecretUri::from_str(&sk.substrate_uri)?;
     let keypair = Keypair::from_uri(&uri)?;
 
-    let call = subxt::dynamic::tx("System", "remark", vec![Value::from_bytes(b"test")]);
+    let call = subxt::dynamic::tx("System", "remark", vec![subxt::dynamic::Value::from_bytes(b"test")]);
 
     let extrinsic = api
         .tx()
@@ -210,7 +211,7 @@ fn load_config() -> Result<Config> {
     dotenv::dotenv().ok();
     env_logger::init();
 
-    let config = std::fs::read_to_string("config.json")?;
+    let config = std::fs::read_to_string("config.json").expect("Failed to read config.json");
     let mut config: Config = serde_json::from_str(&config)?;
 
     config.secrets.instatus_key = std::env::var("INSTATUS_KEY")?;

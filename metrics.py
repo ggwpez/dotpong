@@ -11,8 +11,6 @@ import requests
 import time
 import json
 
-from substrateinterface import SubstrateInterface, Keypair
-
 dotenv.load_dotenv()
 with open('config.json') as f:
 	cfg = json.load(f)
