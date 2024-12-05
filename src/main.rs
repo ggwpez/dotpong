@@ -9,6 +9,7 @@ use core::future::Future;
 use std::thread::sleep;
 use std::time::{Instant, SystemTime};
 use subxt::lightclient::LightClient;
+use std::io::Write;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
@@ -59,7 +60,7 @@ async fn main() -> Result<()> {
     let config = load_config()?;
 
     loop {
-        for net in config.transactions.iter().skip(1) {
+        for net in config.transactions.iter() {
             let timing = retry(|| send_tx(&net, &config.secrets)).await?;
             log::info!("TX to {} took {:?}", net.rpc, timing);
             timing.upload(&config, &net.metrics).await?;
@@ -95,7 +96,7 @@ async fn send_tx(tx: &NetworkConfig, sk: &Secrets) -> Result<TxTiming> {
     let uri = SecretUri::from_str(&sk.substrate_uri)?;
     let keypair = Keypair::from_uri(&uri)?;
 
-    let call = subxt::dynamic::tx("System", "remark", vec![subxt::dynamic::Value::from_bytes(b"test")]);
+    let call = subxt::dynamic::tx("System", "remark", vec![subxt::dynamic::Value::from_bytes(b"dotpong.instatus.com")]);
 
     let extrinsic = api
         .tx()
@@ -178,13 +179,23 @@ async fn upload_metric(
     when: i64,
     what: Duration,
 ) -> Result<()> {
-    let client = reqwest::Client::new();
-    let url = format!("https://api.instatus.com/v1/{page}/metrics/{metric}",);
-
-    let body = serde_json::json!({
+        let body = serde_json::json!({
         "timestamp": when,
         "value": what.as_millis(),
     });
+
+    // Append one line to the json file
+    let filename = format!("metrics/{}_{}.json", page, metric);
+    let s = serde_json::to_string(&body)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&filename)?;
+    writeln!(file, "{}", s)?;
+    drop(file);
+
+    let client = reqwest::Client::new();
+    let url = format!("https://api.instatus.com/v1/{page}/metrics/{metric}",);
 
     let res = client
         .post(&url)
