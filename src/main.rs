@@ -222,6 +222,10 @@ fn load_config() -> Result<Config> {
     dotenv::dotenv().ok();
     env_logger::init();
 
+    if !std::path::Path::new("metrics").exists() {
+        std::fs::create_dir("metrics")?;
+    }
+
     let config = std::fs::read_to_string("config.json").expect("Failed to read config.json");
     let mut config: Config = serde_json::from_str(&config)?;
 
