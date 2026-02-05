@@ -10,7 +10,7 @@ use axum::{
 use rusqlite::Connection;
 use std::sync::Mutex;
 
-use crate::data::{get_timings, TxTiming};
+use crate::data::{get_daily, get_hourly, get_weekly, AggregatedTiming};
 
 pub struct AppState {
     pub db: Mutex<Connection>,
@@ -26,7 +26,9 @@ struct IndexTemplate {
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/api/timings", get(api_timings))
+        .route("/api/hourly", get(api_hourly))
+        .route("/api/daily", get(api_daily))
+        .route("/api/weekly", get(api_weekly))
         .with_state(state)
 }
 
@@ -37,10 +39,19 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Html(template.render().unwrap_or_default())
 }
 
-async fn api_timings(State(state): State<Arc<AppState>>) -> Json<Vec<TxTiming>> {
+async fn api_hourly(State(state): State<Arc<AppState>>) -> Json<Vec<AggregatedTiming>> {
     let db = state.db.lock().unwrap();
-    let timings = get_timings(&db, Some(100)).unwrap_or_default();
-    Json(timings)
+    Json(get_hourly(&db).unwrap_or_default())
+}
+
+async fn api_daily(State(state): State<Arc<AppState>>) -> Json<Vec<AggregatedTiming>> {
+    let db = state.db.lock().unwrap();
+    Json(get_daily(&db).unwrap_or_default())
+}
+
+async fn api_weekly(State(state): State<Arc<AppState>>) -> Json<Vec<AggregatedTiming>> {
+    let db = state.db.lock().unwrap();
+    Json(get_weekly(&db).unwrap_or_default())
 }
 
 pub async fn serve(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {

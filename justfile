@@ -14,3 +14,6 @@ run network *args:
 
 backfill network *args:
 	cargo run -q --bin backfill -- --network {{network}} {{args}}
+
+default:
+	just run polkadot-hub --delay 600 --port 4000

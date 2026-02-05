@@ -3,100 +3,202 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ network }} - Status</title>
+    <title>{{ network }} - Time to Finality</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+        :root {
+            /* Warm Grey Scale */
+            --grey-50: #fafaf9;
+            --grey-100: #f5f5f4;
+            --grey-200: #e7e5e4;
+            --grey-300: #d6d3d1;
+            --grey-400: #a8a29e;
+            --grey-500: #78716c;
+            --grey-600: #57534e;
+            --grey-700: #44403c;
+            --grey-800: #292524;
+            --grey-900: #1c1917;
+            --grey-950: #0f0f0f;
+
+            /* Accent */
+            --accent: #ff2867;
+            --accent-hover: #e6245d;
+            --accent-soft: rgba(255, 40, 103, 0.08);
+
+            /* Semantic */
+            --success: #059669;
+
+            /* Dark mode colors */
+            --color-bg: var(--grey-950);
+            --color-surface: var(--grey-900);
+            --color-surface-secondary: var(--grey-800);
+            --color-text-primary: var(--grey-50);
+            --color-text-secondary: var(--grey-400);
+            --color-text-tertiary: var(--grey-500);
+            --color-border: var(--grey-700);
+            --color-border-strong: var(--grey-600);
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0a0a;
-            color: #e5e5e5;
+            font-family: 'DM Sans', system-ui, sans-serif;
+            background: var(--color-bg);
+            color: var(--color-text-primary);
             min-height: 100vh;
-            padding: 2rem;
+            line-height: 1.625;
         }
+
+        ::selection {
+            background: var(--accent-soft);
+            color: var(--color-text-primary);
+        }
+
         .container {
-            max-width: 900px;
+            max-width: 1024px;
             margin: 0 auto;
+            padding: 5rem 1.5rem;
         }
+
+        @media (min-width: 768px) {
+            .container {
+                padding: 5rem 3rem;
+            }
+        }
+
         header {
             text-align: center;
             margin-bottom: 3rem;
         }
+
         h1 {
-            font-size: 2rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-        }
-        .network-badge {
-            display: inline-block;
-            background: #e6007a;
-            color: white;
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-        .card {
-            background: #141414;
-            border: 1px solid #262626;
-            border-radius: 0.75rem;
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-        .card h2 {
-            font-size: 1rem;
-            font-weight: 500;
-            color: #a3a3a3;
+            font-family: 'DM Serif Display', Georgia, serif;
+            font-size: clamp(2.5rem, 4vw + 1rem, 4rem);
+            font-weight: 400;
+            letter-spacing: -0.02em;
+            line-height: 1.2;
+            color: var(--color-text-primary);
             margin-bottom: 1rem;
         }
+
+        .network-badge {
+            display: inline-block;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--color-text-secondary);
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--color-border);
+            border-radius: 9999px;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @media (min-width: 768px) {
+            .card {
+                padding: 2rem;
+            }
+        }
+
+        .card:hover {
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 1.5rem;
+        }
+
+        .card h2 {
+            font-family: 'DM Serif Display', Georgia, serif;
+            font-size: 1.5rem;
+            font-weight: 400;
+            color: var(--color-text-primary);
+        }
+
+        .card-subtitle {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--color-text-tertiary);
+            letter-spacing: 0.05em;
+        }
+
         .chart-container {
             position: relative;
-            height: 300px;
+            height: 180px;
         }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 1rem;
-            margin-top: 1rem;
+
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 200px;
+            }
         }
-        .stat {
-            text-align: center;
-        }
-        .stat-value {
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: #fff;
-        }
-        .stat-label {
-            font-size: 0.75rem;
-            color: #737373;
-            margin-top: 0.25rem;
-        }
+
         .legend {
             display: flex;
             justify-content: center;
             gap: 2rem;
-            margin-top: 1rem;
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--color-border);
         }
+
         .legend-item {
             display: flex;
             align-items: center;
             gap: 0.5rem;
             font-size: 0.875rem;
+            color: var(--color-text-secondary);
         }
+
         .legend-color {
             width: 12px;
             height: 12px;
-            border-radius: 2px;
+            border-radius: 4px;
         }
-        .loading {
+
+        .footer {
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--color-border);
             text-align: center;
-            color: #737373;
-            padding: 2rem;
+        }
+
+        .footer p {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--color-text-tertiary);
+            letter-spacing: 0.05em;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
@@ -107,155 +209,182 @@
             <span class="network-badge">{{ network }}</span>
         </header>
 
-        <div class="card">
-            <h2>Finality Breakdown</h2>
-            <div class="chart-container">
-                <canvas id="finalityChart"></canvas>
-            </div>
-            <div class="legend">
-                <div class="legend-item">
-                    <div class="legend-color" style="background: #22c55e;"></div>
-                    <span>In-Block</span>
+        <div class="charts-grid">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Last 24 Hours</h2>
+                    <span class="card-subtitle">hourly avg</span>
                 </div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background: #e6007a;"></div>
-                    <span>Finalization</span>
+                <div class="chart-container">
+                    <canvas id="hourlyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>Last 7 Days</h2>
+                    <span class="card-subtitle">daily avg</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>Last 4 Weeks</h2>
+                    <span class="card-subtitle">weekly avg</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="weeklyChart"></canvas>
                 </div>
             </div>
         </div>
 
-        <div class="card">
-            <h2>Current Statistics</h2>
-            <div class="stats">
-                <div class="stat">
-                    <div class="stat-value" id="avgInclusion">-</div>
-                    <div class="stat-label">Avg In-Block</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value" id="avgFinalization">-</div>
-                    <div class="stat-label">Avg Finalization</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value" id="sampleCount">-</div>
-                    <div class="stat-label">Samples</div>
-                </div>
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: #d6d3d1;"></div>
+                <span>In-Block</span>
             </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #78716c;"></div>
+                <span>Finalization</span>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>Powered by Dotpong</p>
         </div>
     </div>
 
     <script>
-        let chart = null;
-
-        async function fetchData() {
-            try {
-                const response = await fetch('/api/timings');
-                const data = await response.json();
-                return data.reverse(); // oldest first for chart
-            } catch (e) {
-                console.error('Failed to fetch data:', e);
-                return [];
-            }
-        }
-
-        function formatMs(ms) {
-            if (ms >= 1000) {
-                return (ms / 1000).toFixed(1) + 's';
-            }
-            return ms + 'ms';
-        }
-
-        function updateStats(data) {
-            if (data.length === 0) return;
-
-            const avgInclusion = data.reduce((a, b) => a + b.inclusion_ms, 0) / data.length;
-            const avgFinalization = data.reduce((a, b) => a + b.finalization_ms, 0) / data.length;
-
-            document.getElementById('avgInclusion').textContent = formatMs(Math.round(avgInclusion));
-            document.getElementById('avgFinalization').textContent = formatMs(Math.round(avgFinalization));
-            document.getElementById('sampleCount').textContent = data.length;
-        }
-
-        function createChart(data) {
-            const ctx = document.getElementById('finalityChart').getContext('2d');
-
-            const labels = data.map(d => {
-                const date = new Date(d.timestamp);
-                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            });
-
-            // In-block time (inclusion)
-            const inclusionData = data.map(d => d.inclusion_ms / 1000);
-            // Additional time from inclusion to finalization
-            const finalizationDelta = data.map(d => (d.finalization_ms - d.inclusion_ms) / 1000);
-
-            if (chart) {
-                chart.destroy();
-            }
-
-            chart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: 'In-Block',
-                            data: inclusionData,
-                            backgroundColor: '#22c55e',
-                            borderRadius: 2,
+        const chartConfig = {
+            type: 'bar',
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        stacked: true,
+                        grid: {
+                            color: '#44403c',
+                            drawBorder: false
                         },
-                        {
-                            label: 'To Finalization',
-                            data: finalizationDelta,
-                            backgroundColor: '#e6007a',
-                            borderRadius: 2,
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            stacked: true,
-                            grid: { color: '#262626' },
-                            ticks: { color: '#737373' }
-                        },
-                        y: {
-                            stacked: true,
-                            grid: { color: '#262626' },
-                            ticks: {
-                                color: '#737373',
-                                callback: value => value + 's'
+                        ticks: {
+                            color: '#78716c',
+                            font: {
+                                family: "'JetBrains Mono', monospace",
+                                size: 10
                             },
-                            title: {
-                                display: true,
-                                text: 'Time (seconds)',
-                                color: '#737373'
-                            }
-                        }
+                            maxRotation: 0
+                        },
+                        border: { display: false }
                     },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: ctx => ctx.dataset.label + ': ' + ctx.raw.toFixed(2) + 's'
-                            }
+                    y: {
+                        stacked: true,
+                        grid: {
+                            color: '#44403c',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#78716c',
+                            font: {
+                                family: "'JetBrains Mono', monospace",
+                                size: 10
+                            },
+                            callback: value => value + 's'
+                        },
+                        border: { display: false }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1c1917',
+                        borderColor: '#44403c',
+                        borderWidth: 1,
+                        titleFont: {
+                            family: "'DM Sans', sans-serif",
+                            size: 13
+                        },
+                        bodyFont: {
+                            family: "'JetBrains Mono', monospace",
+                            size: 12
+                        },
+                        padding: 12,
+                        cornerRadius: 8,
+                        callbacks: {
+                            label: ctx => ctx.dataset.label + ': ' + ctx.raw.toFixed(1) + 's'
                         }
                     }
                 }
+            }
+        };
+
+        function createChartData(data, labelFn) {
+            const labels = data.map(labelFn);
+            const inclusionData = data.map(d => d.avg_inclusion_ms / 1000);
+            const finalizationDelta = data.map(d => (d.avg_finalization_ms - d.avg_inclusion_ms) / 1000);
+
+            return {
+                labels,
+                datasets: [
+                    {
+                        label: 'In-Block',
+                        data: inclusionData,
+                        backgroundColor: '#d6d3d1',
+                        borderRadius: 4,
+                    },
+                    {
+                        label: 'To Finalization',
+                        data: finalizationDelta,
+                        backgroundColor: '#78716c',
+                        borderRadius: 4,
+                    }
+                ]
+            };
+        }
+
+        let charts = {};
+
+        async function loadChart(id, endpoint, labelFn) {
+            const response = await fetch(endpoint);
+            const data = await response.json();
+
+            if (charts[id]) {
+                charts[id].destroy();
+            }
+
+            const ctx = document.getElementById(id).getContext('2d');
+            charts[id] = new Chart(ctx, {
+                ...chartConfig,
+                data: createChartData(data, labelFn)
             });
         }
 
+        function formatHour(d) {
+            return new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatDay(d) {
+            return new Date(d.timestamp).toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+        }
+
+        function formatWeek(d) {
+            const start = new Date(d.timestamp);
+            return start.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        }
+
         async function refresh() {
-            const data = await fetchData();
-            if (data.length > 0) {
-                createChart(data);
-                updateStats(data);
-            }
+            await Promise.all([
+                loadChart('hourlyChart', '/api/hourly', formatHour),
+                loadChart('dailyChart', '/api/daily', formatDay),
+                loadChart('weeklyChart', '/api/weekly', formatWeek),
+            ]);
         }
 
         refresh();
-        setInterval(refresh, 30000); // Refresh every 30s
+        setInterval(refresh, 60000);
     </script>
 </body>
 </html>
