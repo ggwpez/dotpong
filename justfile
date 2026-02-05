@@ -10,10 +10,7 @@ check:
 	cargo check -q
 
 run network *args:
-	cargo run -q -- --network {{network}} {{args}}
+	cargo run -r -q -- --network {{network}} {{args}}
 
 backfill network *args:
-	cargo run -q --bin backfill -- --network {{network}} {{args}}
-
-default:
-	just run polkadot-hub --delay 600 --port 4000
+	cargo run -r -q --bin backfill -- --network {{network}} {{args}}

@@ -70,13 +70,19 @@ async fn main() -> Result<()> {
     let collector_state = state.clone();
     let delay = args.delay;
     tokio::spawn(async move {
+        let mut ticker = AlignedTicker::new(delay);
+
         loop {
+            ticker.wait().await;
+
             match measure_with_failover(&endpoints, &keypair).await {
                 Ok(timing) => {
                     log::info!(
-                        "Measurement: inclusion={}ms, finalization={}ms",
+                        "Measurement: sending={}ms, inclusion={}ms, finalization={}ms, total={}ms",
+                        timing.sending_ms,
                         timing.inclusion_ms,
-                        timing.finalization_ms
+                        timing.finalization_ms,
+                        timing.sending_ms + timing.inclusion_ms + timing.finalization_ms
                     );
                     let db = collector_state.db.lock().unwrap();
                     if let Err(e) = store_timing(&db, &timing) {
@@ -88,7 +94,7 @@ async fn main() -> Result<()> {
                 }
             }
 
-            tokio::time::sleep(Duration::from_secs(delay)).await;
+            ticker.advance();
         }
     });
 
@@ -124,8 +130,10 @@ async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Resul
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No RPC endpoints configured")))
 }
 
-/// Send a transaction and measure inclusion + finalization times
+/// Send a transaction and measure all timing segments
 async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
+    let start = Instant::now();
+
     let api = OnlineClient::<SubstrateConfig>::from_url(rpc)
         .await
         .context("Failed to connect to RPC")?;
@@ -147,26 +155,27 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
         keypair.public_key().to_account_id()
     );
 
-    let start = Instant::now();
     let mut subscription = extrinsic
         .submit_and_watch()
         .await
         .context("Failed to submit transaction")?;
+    let sending_elapsed = start.elapsed();
+    log::info!("Sending took {}ms (connect + sign + submit)", sending_elapsed.as_millis());
 
-    let mut inclusion = None;
-    let mut finalization = None;
+    let mut inclusion_at = None;
+    let mut finalization_at = None;
 
     while let Some(status) = subscription.next().await {
         match status.context("Transaction status error")? {
             InBestBlock(_) => {
-                if inclusion.is_none() {
-                    inclusion = Some(start.elapsed());
-                    log::info!("Included in best block after {}ms", inclusion.unwrap().as_millis());
+                if inclusion_at.is_none() {
+                    inclusion_at = Some(start.elapsed());
+                    log::info!("Included in best block after {}ms", inclusion_at.unwrap().as_millis());
                 }
             }
             InFinalizedBlock(_) => {
-                finalization = Some(start.elapsed());
-                log::info!("Finalized after {}ms", finalization.unwrap().as_millis());
+                finalization_at = Some(start.elapsed());
+                log::info!("Finalized after {}ms", finalization_at.unwrap().as_millis());
                 break;
             }
             Validated | Broadcasted { .. } | NoLongerInBestBlock => {}
@@ -176,13 +185,55 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
         }
     }
 
-    let finalization = finalization.context("Transaction was not finalized")?;
-    let inclusion = inclusion.unwrap_or(finalization);
+    let finalization_at = finalization_at.context("Transaction was not finalized")?;
+    let inclusion_at = inclusion_at.unwrap_or(finalization_at);
 
-    Ok(TxTiming::new(
-        inclusion.as_millis() as u64,
-        finalization.as_millis() as u64,
-    ))
+    // Store as segments: sending | inclusion | finalization
+    let sending_ms = sending_elapsed.as_millis() as u64;
+    let inclusion_ms = (inclusion_at - sending_elapsed).as_millis() as u64;
+    let finalization_ms = (finalization_at - inclusion_at).as_millis() as u64;
+
+    Ok(TxTiming::new(sending_ms, inclusion_ms, finalization_ms))
+}
+
+/// Tick scheduler aligned to unix epoch multiples of a given interval.
+struct AlignedTicker {
+    interval_secs: u64,
+    next_tick: u64,
+}
+
+impl AlignedTicker {
+    fn new(interval_secs: u64) -> Self {
+        let now = Self::now_secs();
+        Self {
+            interval_secs,
+            next_tick: now - (now % interval_secs) + interval_secs,
+        }
+    }
+
+    async fn wait(&self) {
+        let now = Self::now_secs();
+        if self.next_tick > now {
+            let wait = self.next_tick - now;
+            log::info!("Waiting {}s until next measurement", wait);
+            tokio::time::sleep(Duration::from_secs(wait)).await;
+        }
+    }
+
+    fn advance(&mut self) {
+        self.next_tick += self.interval_secs;
+        let now = Self::now_secs();
+        while self.next_tick <= now {
+            self.next_tick += self.interval_secs;
+        }
+    }
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
 }
 
 fn init_logging() {

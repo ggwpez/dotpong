@@ -74,8 +74,43 @@
         }
 
         header {
+            position: relative;
             text-align: center;
             margin-bottom: 3rem;
+        }
+
+        .status {
+            position: absolute;
+            top: 0;
+            right: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--color-text-tertiary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--grey-600);
+        }
+
+        .status-dot.green {
+            background: #059669;
+            box-shadow: 0 0 6px rgba(5, 150, 105, 0.4);
+        }
+
+        .status-dot.orange {
+            background: #d97706;
+            box-shadow: 0 0 6px rgba(217, 119, 6, 0.4);
+        }
+
+        .status-dot.red {
+            background: #dc2626;
+            box-shadow: 0 0 6px rgba(220, 38, 38, 0.4);
         }
 
         h1 {
@@ -160,6 +195,7 @@
         .legend {
             display: flex;
             justify-content: center;
+            flex-wrap: wrap;
             gap: 2rem;
             margin-top: 2rem;
             padding-top: 1.5rem;
@@ -168,16 +204,38 @@
 
         .legend-item {
             display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.25rem;
             font-size: 0.875rem;
             color: var(--color-text-secondary);
+        }
+
+        .legend-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legend-desc {
+            font-size: 0.7rem;
+            color: var(--color-text-tertiary);
+            text-align: center;
+            max-width: 160px;
+            line-height: 1.4;
         }
 
         .legend-color {
             width: 12px;
             height: 12px;
             border-radius: 4px;
+        }
+
+        .card-desc {
+            font-size: 0.8rem;
+            color: var(--color-text-tertiary);
+            margin-bottom: 1rem;
+            line-height: 1.5;
         }
 
         .footer {
@@ -205,6 +263,10 @@
 <body>
     <div class="container">
         <header>
+            <div class="status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">loading</span>
+            </div>
             <h1>Time to Finality</h1>
             <span class="network-badge">{{ network }}</span>
         </header>
@@ -213,8 +275,9 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Last 24 Hours</h2>
-                    <span class="card-subtitle">hourly avg</span>
+                    <span class="card-subtitle">raw samples</span>
                 </div>
+                <p class="card-desc">Each data point is an individual test transaction sent to the network. Shows real-time variance in sending, block inclusion, and finalization times.</p>
                 <div class="chart-container">
                     <canvas id="hourlyChart"></canvas>
                 </div>
@@ -225,6 +288,7 @@
                     <h2>Last 7 Days</h2>
                     <span class="card-subtitle">daily avg</span>
                 </div>
+                <p class="card-desc">Average time to finality per day over the past week. Smooths out individual outliers to reveal daily trends and patterns.</p>
                 <div class="chart-container">
                     <canvas id="dailyChart"></canvas>
                 </div>
@@ -235,6 +299,7 @@
                     <h2>Last 4 Weeks</h2>
                     <span class="card-subtitle">weekly avg</span>
                 </div>
+                <p class="card-desc">Weekly averages over the past month. Useful for spotting longer-term performance regressions or improvements.</p>
                 <div class="chart-container">
                     <canvas id="weeklyChart"></canvas>
                 </div>
@@ -243,29 +308,52 @@
 
         <div class="legend">
             <div class="legend-item">
-                <div class="legend-color" style="background: #78716c;"></div>
-                <span>In-Block</span>
+                <div class="legend-label">
+                    <div class="legend-color" style="background: #fafaf9;"></div>
+                    <span>Total</span>
+                </div>
+                <span class="legend-desc">End-to-end time from send to finality</span>
             </div>
             <div class="legend-item">
-                <div class="legend-color" style="background: #d6d3d1;"></div>
-                <span>Finalization</span>
+                <div class="legend-label">
+                    <div class="legend-color" style="background: #a8a29e;"></div>
+                    <span>Finalization</span>
+                </div>
+                <span class="legend-desc">Time from block inclusion to chain finality</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-label">
+                    <div class="legend-color" style="background: #78716c;"></div>
+                    <span>In-Block</span>
+                </div>
+                <span class="legend-desc">Time from submission to inclusion in a block</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-label">
+                    <div class="legend-color" style="background: #44403c;"></div>
+                    <span>Sending</span>
+                </div>
+                <span class="legend-desc">RPC connect, tx signing, and submission</span>
             </div>
         </div>
 
         <div class="footer">
-            <p>Powered by Dotpong</p>
+            <p><a href="https://github.com/ggwpez/dotpong" style="color: var(--color-text-tertiary); text-decoration: none;">github.com/ggwpez/dotpong</a></p>
         </div>
     </div>
 
     <script>
         const chartConfig = {
-            type: 'bar',
+            type: 'line',
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 scales: {
                     x: {
-                        stacked: true,
                         grid: {
                             color: '#44403c',
                             drawBorder: false
@@ -281,7 +369,6 @@
                         border: { display: false }
                     },
                     y: {
-                        stacked: true,
                         grid: {
                             color: '#44403c',
                             drawBorder: false
@@ -321,26 +408,52 @@
             }
         };
 
+        function val(d, field) {
+            return d['avg_' + field] ?? d[field] ?? 0;
+        }
+
         function createChartData(data, labelFn) {
             const labels = data.map(labelFn);
-            const inclusionData = data.map(d => d.avg_inclusion_ms / 1000);
-            const finalizationDelta = data.map(d => (d.avg_finalization_ms - d.avg_inclusion_ms) / 1000);
+            const sendingData = data.map(d => val(d, 'sending_ms') / 1000);
+            const inclusionData = data.map(d => val(d, 'inclusion_ms') / 1000);
+            const finalizationData = data.map(d => val(d, 'finalization_ms') / 1000);
+            const totalData = data.map(d => (val(d, 'sending_ms') + val(d, 'inclusion_ms') + val(d, 'finalization_ms')) / 1000);
+
+            const line = {
+                fill: false,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 2,
+            };
 
             return {
                 labels,
                 datasets: [
                     {
-                        label: 'In-Block',
-                        data: inclusionData,
-                        backgroundColor: '#78716c',
-                        borderRadius: 4,
+                        label: 'Total',
+                        data: totalData,
+                        borderColor: '#fafaf9',
+                        ...line,
                     },
                     {
-                        label: 'To Finalization',
-                        data: finalizationDelta,
-                        backgroundColor: '#d6d3d1',
-                        borderRadius: 4,
-                    }
+                        label: 'Finalization',
+                        data: finalizationData,
+                        borderColor: '#a8a29e',
+                        ...line,
+                    },
+                    {
+                        label: 'In-Block',
+                        data: inclusionData,
+                        borderColor: '#78716c',
+                        ...line,
+                    },
+                    {
+                        label: 'Sending',
+                        data: sendingData,
+                        borderColor: '#44403c',
+                        ...line,
+                    },
                 ]
             };
         }
@@ -375,9 +488,44 @@
             return start.toLocaleDateString([], { month: 'short', day: 'numeric' });
         }
 
+        function updateStatus(data) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            if (!data || data.length === 0) {
+                dot.className = 'status-dot red';
+                text.textContent = 'no data';
+                return;
+            }
+
+            const lastTs = data[data.length - 1].timestamp;
+            const ageMin = (Date.now() - lastTs) / 60000;
+
+            if (ageMin <= 60) {
+                dot.className = 'status-dot green';
+                text.textContent = ageMin < 1 ? 'just now' : Math.round(ageMin) + 'm ago';
+            } else if (ageMin <= 1440) {
+                dot.className = 'status-dot orange';
+                text.textContent = Math.round(ageMin / 60) + 'h ago';
+            } else {
+                dot.className = 'status-dot red';
+                text.textContent = Math.round(ageMin / 1440) + 'd ago';
+            }
+        }
+
         async function refresh() {
+            const hourlyRes = await fetch('/api/hourly');
+            const hourlyData = await hourlyRes.json();
+            updateStatus(hourlyData);
+
+            if (charts['hourlyChart']) charts['hourlyChart'].destroy();
+            const ctx = document.getElementById('hourlyChart').getContext('2d');
+            charts['hourlyChart'] = new Chart(ctx, {
+                ...chartConfig,
+                data: createChartData(hourlyData, formatHour)
+            });
+
             await Promise.all([
-                loadChart('hourlyChart', '/api/hourly', formatHour),
                 loadChart('dailyChart', '/api/daily', formatDay),
                 loadChart('weeklyChart', '/api/weekly', formatWeek),
             ]);

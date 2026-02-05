@@ -3,21 +3,26 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-/// Timing data from a single transaction
+/// Timing data from a single transaction.
+/// All durations are segments (not cumulative):
+///   total = sending_ms + inclusion_ms + finalization_ms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxTiming {
     /// Unix timestamp in milliseconds when measurement started
     pub timestamp: i64,
-    /// Time until transaction was included in best block
+    /// Time for RPC connect + tx signing + submit_and_watch
+    pub sending_ms: u64,
+    /// Time from submission to included in best block
     pub inclusion_ms: u64,
-    /// Time until transaction was finalized
+    /// Time from in-block to finalized
     pub finalization_ms: u64,
 }
 
 impl TxTiming {
-    pub fn new(inclusion_ms: u64, finalization_ms: u64) -> Self {
+    pub fn new(sending_ms: u64, inclusion_ms: u64, finalization_ms: u64) -> Self {
         Self {
             timestamp: unix_ms(),
+            sending_ms,
             inclusion_ms,
             finalization_ms,
         }
@@ -33,6 +38,7 @@ pub fn init_database(network: &str) -> Result<Connection> {
         "CREATE TABLE IF NOT EXISTS timings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp INTEGER NOT NULL,
+            sending_ms INTEGER NOT NULL,
             inclusion_ms INTEGER NOT NULL,
             finalization_ms INTEGER NOT NULL
         )",
@@ -50,52 +56,47 @@ pub fn init_database(network: &str) -> Result<Connection> {
 
 pub fn store_timing(conn: &Connection, timing: &TxTiming) -> Result<()> {
     conn.execute(
-        "INSERT INTO timings (timestamp, inclusion_ms, finalization_ms) VALUES (?1, ?2, ?3)",
-        [timing.timestamp, timing.inclusion_ms as i64, timing.finalization_ms as i64],
+        "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms) VALUES (?1, ?2, ?3, ?4)",
+        [timing.timestamp, timing.sending_ms as i64, timing.inclusion_ms as i64, timing.finalization_ms as i64],
     )
     .context("Failed to insert timing")?;
     Ok(())
 }
 
-pub fn get_timings(conn: &Connection, limit: Option<u32>) -> Result<Vec<TxTiming>> {
-    let limit = limit.unwrap_or(1000);
+/// Aggregated timing data for a time bucket
+#[derive(Debug, Clone, Serialize)]
+pub struct AggregatedTiming {
+    pub timestamp: i64,
+    pub avg_sending_ms: u64,
+    pub avg_inclusion_ms: u64,
+    pub avg_finalization_ms: u64,
+    pub sample_count: u32,
+}
+
+/// Get raw data points for the last 24 hours
+pub fn get_hourly(conn: &Connection) -> Result<Vec<TxTiming>> {
+    let now = unix_ms();
+    let start = now - (24 * 60 * 60 * 1000);
+
     let mut stmt = conn.prepare(
-        "SELECT timestamp, inclusion_ms, finalization_ms FROM timings ORDER BY timestamp DESC LIMIT ?1"
+        "SELECT timestamp, sending_ms, inclusion_ms, finalization_ms
+         FROM timings
+         WHERE timestamp >= ?1
+         ORDER BY timestamp ASC"
     )?;
 
     let timings = stmt
-        .query_map([limit], |row| {
+        .query_map([start], |row| {
             Ok(TxTiming {
                 timestamp: row.get(0)?,
-                inclusion_ms: row.get::<_, i64>(1)? as u64,
-                finalization_ms: row.get::<_, i64>(2)? as u64,
+                sending_ms: row.get::<_, i64>(1)? as u64,
+                inclusion_ms: row.get::<_, i64>(2)? as u64,
+                finalization_ms: row.get::<_, i64>(3)? as u64,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(timings)
-}
-
-/// Aggregated timing data for a time bucket
-#[derive(Debug, Clone, Serialize)]
-pub struct AggregatedTiming {
-    /// Start of the time bucket (unix ms)
-    pub timestamp: i64,
-    /// Average inclusion time in ms
-    pub avg_inclusion_ms: u64,
-    /// Average finalization time in ms
-    pub avg_finalization_ms: u64,
-    /// Number of samples in this bucket
-    pub sample_count: u32,
-}
-
-/// Get hourly aggregates for the last 24 hours
-pub fn get_hourly(conn: &Connection) -> Result<Vec<AggregatedTiming>> {
-    let hour_ms: i64 = 60 * 60 * 1000;
-    let now = unix_ms();
-    let start = now - (24 * hour_ms);
-
-    get_aggregated(conn, start, hour_ms)
 }
 
 /// Get daily aggregates for the last 7 days
@@ -120,6 +121,7 @@ fn get_aggregated(conn: &Connection, start: i64, bucket_ms: i64) -> Result<Vec<A
     let mut stmt = conn.prepare(
         "SELECT
             (timestamp / ?1) * ?1 as bucket,
+            AVG(sending_ms) as avg_send,
             AVG(inclusion_ms) as avg_inc,
             AVG(finalization_ms) as avg_fin,
             COUNT(*) as cnt
@@ -133,9 +135,10 @@ fn get_aggregated(conn: &Connection, start: i64, bucket_ms: i64) -> Result<Vec<A
         .query_map([bucket_ms, start], |row| {
             Ok(AggregatedTiming {
                 timestamp: row.get(0)?,
-                avg_inclusion_ms: row.get::<_, f64>(1)? as u64,
-                avg_finalization_ms: row.get::<_, f64>(2)? as u64,
-                sample_count: row.get(3)?,
+                avg_sending_ms: row.get::<_, f64>(1)? as u64,
+                avg_inclusion_ms: row.get::<_, f64>(2)? as u64,
+                avg_finalization_ms: row.get::<_, f64>(3)? as u64,
+                sample_count: row.get(4)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

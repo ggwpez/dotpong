@@ -23,9 +23,8 @@ fn main() -> Result<()> {
 
     let mut rng = rand::thread_rng();
 
-    // 10 minutes = 600_000 ms
     let interval_ms: i64 = 10 * 60 * 1000;
-    let entries_per_day = 24 * 6; // 144 entries per day
+    let entries_per_day = 24 * 6;
     let total_entries = entries_per_day * args.days as usize;
 
     let now_ms = SystemTime::now()
@@ -33,7 +32,6 @@ fn main() -> Result<()> {
         .unwrap()
         .as_millis() as i64;
 
-    // Start from (days ago) and work forward
     let start_ms = now_ms - (args.days as i64 * 24 * 60 * 60 * 1000);
 
     println!(
@@ -44,14 +42,16 @@ fn main() -> Result<()> {
     for i in 0..total_entries {
         let timestamp = start_ms + (i as i64 * interval_ms);
 
-        // Random in-block: 1-5 seconds (1000-5000ms)
+        // sending (connect + sign + submit): 100-500ms
+        let sending_ms = rng.gen_range(100..=500);
+        // in-block: 1-5 seconds
         let inclusion_ms = rng.gen_range(1000..=5000);
-
-        // Random finalization: 10-50 seconds (10000-50000ms)
+        // finalization: 10-50 seconds
         let finalization_ms = rng.gen_range(10000..=50000);
 
         let timing = TxTiming {
             timestamp,
+            sending_ms,
             inclusion_ms,
             finalization_ms,
         };
