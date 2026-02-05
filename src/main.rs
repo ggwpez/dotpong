@@ -1,266 +1,208 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use clap::Parser;
 use core::str::FromStr;
-use scale_value::Value;
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use dotpong::data::{init_database, store_timing, TxTiming};
+use dotpong::web;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use subxt::{tx::TxStatus::*, OnlineClient, SubstrateConfig};
 use subxt_signer::{sr25519::Keypair, SecretUri};
-use core::future::Future;
-use std::thread::sleep;
-use std::time::{Instant, SystemTime};
-use subxt::lightclient::LightClient;
-use std::io::Write;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Parser)]
+#[command(name = "dotpong")]
+#[command(about = "Measure transaction finality times on Polkadot networks")]
+struct Args {
+    /// Network to monitor (must match a key in config.json)
+    #[arg(short, long)]
+    network: String,
+
+    /// Delay between measurements in seconds
+    #[arg(short, long, default_value = "600")]
+    delay: u64,
+
+    /// Port to serve web UI on
+    #[arg(short, long, default_value = "8080")]
+    port: u16,
+}
+
+/// Application configuration
+#[derive(Debug, Deserialize)]
 struct Config {
-    page: String,
-    transactions: Vec<NetworkConfig>,
-    #[serde(skip)]
-    secrets: Secrets,
-    interval_sec: u32,
+    /// Available networks, keyed by name
+    networks: HashMap<String, NetworkConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Configuration for a single network
+#[derive(Debug, Deserialize)]
 struct NetworkConfig {
-    rpc: String,
-    metrics: Metric,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Metric {
-    /// Metric ID for included TX.
-    inclusion: String,
-    /// Metric ID for finalized TX.
-    finalization: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct Secrets {
-    #[serde(skip)]
-    instatus_key: String,
-    #[serde(skip)]
-    substrate_uri: String,
-}
-
-#[derive(Debug)]
-struct TxTiming {
-    when: i64,
-    inclusion: Duration,
-    finalization: Duration,
-}
-
-#[derive(Debug)]
-struct SyncTiming {
-    when: i64,
-    warp: Duration,
+    /// RPC endpoints (tried in order for failover)
+    rpc_endpoints: Vec<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_logging();
+
+    let args = Args::parse();
     let config = load_config()?;
 
-    loop {
-        for net in config.transactions.iter() {
-            let timing = retry(|| send_tx(&net, &config.secrets)).await?;
-            log::info!("TX to {} took {:?}", net.rpc, timing);
-            timing.upload(&config, &net.metrics).await?;
-            sleep(Duration::from_secs(5));
+    let net_config = get_network(&config, &args.network)?;
+    let keypair = load_keypair()?;
+    let db = init_database(&args.network)?;
+
+    let state = Arc::new(web::AppState {
+        db: Mutex::new(db),
+        network: args.network.clone(),
+    });
+
+    log::info!(
+        "Starting dotpong for '{}' with {} RPC endpoints, {}s interval, serving on port {}",
+        args.network,
+        net_config.rpc_endpoints.len(),
+        args.delay,
+        args.port
+    );
+
+    // Spawn collector task
+    let endpoints = net_config.rpc_endpoints.clone();
+    let collector_state = state.clone();
+    let delay = args.delay;
+    tokio::spawn(async move {
+        loop {
+            match measure_with_failover(&endpoints, &keypair).await {
+                Ok(timing) => {
+                    log::info!(
+                        "Measurement: inclusion={}ms, finalization={}ms",
+                        timing.inclusion_ms,
+                        timing.finalization_ms
+                    );
+                    let db = collector_state.db.lock().unwrap();
+                    if let Err(e) = store_timing(&db, &timing) {
+                        log::error!("Failed to store timing: {e}");
+                    }
+                }
+                Err(e) => {
+                    log::error!("All RPC endpoints failed: {e}");
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(delay)).await;
         }
+    });
 
-        log::info!("Sleeping for {} seconds until next round-robin", config.interval_sec);
-        sleep(Duration::from_secs(config.interval_sec as u64));
+    // Run web server on main task
+    web::serve(state, args.port).await?;
+
+    Ok(())
+}
+
+fn get_network<'a>(config: &'a Config, network: &str) -> Result<&'a NetworkConfig> {
+    config.networks.get(network).with_context(|| {
+        let available: Vec<_> = config.networks.keys().collect();
+        format!("Unknown network '{}'. Available: {:?}", network, available)
+    })
+}
+
+/// Try each RPC endpoint in order until one succeeds
+async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Result<TxTiming> {
+    let mut last_error = None;
+
+    for (i, rpc) in endpoints.iter().enumerate() {
+        log::info!("Trying RPC endpoint {}/{}: {}", i + 1, endpoints.len(), rpc);
+
+        match send_tx(rpc, keypair).await {
+            Ok(timing) => return Ok(timing),
+            Err(e) => {
+                log::warn!("RPC {} failed: {e}", rpc);
+                last_error = Some(e);
+            }
+        }
     }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No RPC endpoints configured")))
 }
 
-// TODO use
-async fn sync(_tx: &NetworkConfig) -> Result<SyncTiming> {
-    /*const POLKADOT_SPEC: &str = include_str!("../specs/polkadot-relay.json");
+/// Send a transaction and measure inclusion + finalization times
+async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
+    let api = OnlineClient::<SubstrateConfig>::from_url(rpc)
+        .await
+        .context("Failed to connect to RPC")?;
 
-    // curl -H "Content-Type: application/json" -d '{"id":1, "jsonrpc":"2.0", "method": "sync_state_genSyncSpec", "params":[true]}' https://rococo-rpc.polkadot.io | jq .result > chain_spec.json
-
-    log::info!("Starting Polkadot light client sync");
-    let when = unix_ms();
-    let now = Instant::now();
-    let (_lightclient, polkadot_rpc) = LightClient::relay_chain(POLKADOT_SPEC)?;
-    let _api = OnlineClient::<SubstrateConfig>::from_rpc_client(polkadot_rpc).await?;
-
-    Ok(SyncTiming {
-        when,
-        warp: now.elapsed(),
-    })*/
-    todo!()
-}
-
-async fn send_tx(tx: &NetworkConfig, sk: &Secrets) -> Result<TxTiming> {
-    let api = OnlineClient::<SubstrateConfig>::from_url(&tx.rpc).await?;
-    let uri = SecretUri::from_str(&sk.substrate_uri)?;
-    let keypair = Keypair::from_uri(&uri)?;
-
-    let call = subxt::dynamic::tx("System", "remark", vec![subxt::dynamic::Value::from_bytes(b"dotpong.instatus.com")]);
+    let call = subxt::dynamic::tx(
+        "System",
+        "remark",
+        vec![subxt::dynamic::Value::from_bytes(b"dotpong")],
+    );
 
     let extrinsic = api
         .tx()
-        .create_signed(&call, &keypair, Default::default())
-        .await?;
+        .create_signed(&call, keypair, Default::default())
+        .await
+        .context("Failed to create signed transaction")?;
 
     log::info!(
-        "Sending TX to {} from acc {}",
-        tx.rpc,
-        keypair.public_key().to_account_id().to_string()
+        "Submitting tx from {}",
+        keypair.public_key().to_account_id()
     );
 
-    let when = unix_ms();
-    let start = std::time::Instant::now();
-    let mut subscription = extrinsic.submit_and_watch().await?;
+    let start = Instant::now();
+    let mut subscription = extrinsic
+        .submit_and_watch()
+        .await
+        .context("Failed to submit transaction")?;
 
     let mut inclusion = None;
     let mut finalization = None;
 
     while let Some(status) = subscription.next().await {
-        match status? {
+        match status.context("Transaction status error")? {
             InBestBlock(_) => {
-                if inclusion.is_some() {
-                    log::warn!("TX included multiple times; fork?");
-                    continue;
+                if inclusion.is_none() {
+                    inclusion = Some(start.elapsed());
+                    log::info!("Included in best block after {}ms", inclusion.unwrap().as_millis());
                 }
-                inclusion = Some(start.elapsed());
-                log::info!("TX included after {} ms", inclusion.unwrap().as_millis());
             }
             InFinalizedBlock(_) => {
                 finalization = Some(start.elapsed());
-                log::info!(
-                    "TX finalized after {} ms",
-                    finalization.unwrap().as_millis()
-                );
+                log::info!("Finalized after {}ms", finalization.unwrap().as_millis());
+                break;
             }
             Validated | Broadcasted { .. } | NoLongerInBestBlock => {}
             status => {
-                log::error!("Unexpected status: {:?}", status);
-                inclusion = Some(inclusion.unwrap_or(Duration::from_secs(60)));
-                finalization = Some(finalization.unwrap_or(Duration::from_secs(60)));
+                log::warn!("Unexpected status: {:?}", status);
             }
         }
     }
 
-    Ok(TxTiming {
-        when,
-        inclusion: inclusion.or(finalization).ok_or_else(|| anyhow::anyhow!("Not included"))?,
-        finalization: finalization.ok_or_else(|| anyhow::anyhow!("Not finalized"))?,
-    })
+    let finalization = finalization.context("Transaction was not finalized")?;
+    let inclusion = inclusion.unwrap_or(finalization);
+
+    Ok(TxTiming::new(
+        inclusion.as_millis() as u64,
+        finalization.as_millis() as u64,
+    ))
 }
 
-impl TxTiming {
-    pub async fn upload(&self, config: &Config, metrics: &Metric) -> Result<()> {
-        retry(|| upload_metric(
-            &config.page,
-            &metrics.inclusion,
-            &config.secrets,
-            self.when,
-            self.inclusion,
-        )).await?;
-
-        sleep(Duration::from_secs(5));
-        
-        retry(|| upload_metric(
-            &config.page,
-            &metrics.finalization,
-            &config.secrets,
-            self.when,
-            self.finalization,
-        )).await?;
-        Ok(())
+fn init_logging() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
     }
-}
-
-async fn upload_metric(
-    page: &str,
-    metric: &str,
-    secret: &Secrets,
-    when: i64,
-    what: Duration,
-) -> Result<()> {
-        let body = serde_json::json!({
-        "timestamp": when,
-        "value": what.as_millis(),
-    });
-
-    // Append one line to the json file
-    let filename = format!("metrics/{}_{}.json", page, metric);
-    let s = serde_json::to_string(&body)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&filename)?;
-    writeln!(file, "{}", s)?;
-    drop(file);
-
-    let client = reqwest::Client::new();
-    let url = format!("https://api.instatus.com/v1/{page}/metrics/{metric}",);
-
-    let res = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", &secret.instatus_key))
-        .json(&body)
-        .send()
-        .await?;
-
-    if res.status().is_success() {
-        log::info!("Uploaded metric for {}: {:?}", metric, what);
-    } else {
-        log::error!(
-            "Failed to upload metric for {}: {:?}",
-            metric,
-            res.text().await?
-        );
-    }
-
-    Ok(())
+    env_logger::init();
 }
 
 fn load_config() -> Result<Config> {
-    std::env::set_var("RUST_LOG", "info");
+    let config_str = std::fs::read_to_string("config.json")
+        .context("Failed to read config.json")?;
+    serde_json::from_str(&config_str).context("Failed to parse config.json")
+}
+
+fn load_keypair() -> Result<Keypair> {
     dotenv::dotenv().ok();
-    env_logger::init();
-
-    if !std::path::Path::new("metrics").exists() {
-        std::fs::create_dir("metrics")?;
-    }
-
-    let config = std::fs::read_to_string("config.json").expect("Failed to read config.json");
-    let mut config: Config = serde_json::from_str(&config)?;
-
-    config.secrets.instatus_key = std::env::var("INSTATUS_KEY")?;
-    config.secrets.substrate_uri = std::env::var("SUBSTRATE_URI")?;
-
-    Ok(config)
-}
-
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
-
-async fn retry<T, E, Fut, F: FnMut() -> Fut>(mut f: F) -> Result<T, E>
-where
-    Fut: Future<Output = Result<T, E>>,
-    E: core::fmt::Debug,
-    T: core::fmt::Debug,
-{
-    let mut count = 0;
-    loop {
-        let result = f().await;
-
-        if result.is_ok() {
-            break result;
-        } else {
-            log::error!("Retry #{} failed: {:?}", count + 1, result);
-            sleep(Duration::from_secs(15));
-            if count > 5 {
-                break result;
-            }
-            count += 1;
-        }
-    }
+    let uri_str = std::env::var("SUBSTRATE_URI")
+        .context("SUBSTRATE_URI environment variable not set")?;
+    let uri = SecretUri::from_str(&uri_str)
+        .context("Invalid SUBSTRATE_URI")?;
+    Keypair::from_uri(&uri).context("Failed to create keypair from URI")
 }

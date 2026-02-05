@@ -1,20 +1,16 @@
 {
-	"page": "clvgrqiia48198b6oqxfkkt7tb",
-	"interval_sec": 600,
-	"transactions": [
-		{
-			"rpc": "wss://westend-rpc.polkadot.io",
-			"metrics": {
-				"inclusion": "clvh3hr9h35931bioklm18aqtg",
-				"finalization": "clvh3i8kr37310biokl2hmdzqi"
-			}
-		},
-		{
-			"rpc": "wss://westend-asset-hub-rpc.polkadot.io",
-			"metrics": {
-				"inclusion": "clvh3h9gf34789biokm14v0554",
-				"finalization": "clvh3hlcb35510biokitusqybe"
-			}
-		}
-	]
+  "networks": {
+    "polkadot-hub": {
+      "rpc_endpoints": [
+        "wss://polkadot-asset-hub-rpc.polkadot.io",
+        "wss://sys.ibp.network/asset-hub-polkadot",
+        "wss://asset-hub-polkadot-rpc.dwellir.com"
+      ]
+    },
+    "paseo-hub": {
+      "rpc_endpoints": [
+        "wss://sys.ibp.network/asset-hub-paseo"
+      ]
+    }
+  }
 }

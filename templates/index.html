@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ network }} - Status</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e5e5e5;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        .network-badge {
+            display: inline-block;
+            background: #e6007a;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        .card {
+            background: #141414;
+            border: 1px solid #262626;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .card h2 {
+            font-size: 1rem;
+            font-weight: 500;
+            color: #a3a3a3;
+            margin-bottom: 1rem;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .stat {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: #fff;
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: #737373;
+            margin-top: 0.25rem;
+        }
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 1rem;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        .loading {
+            text-align: center;
+            color: #737373;
+            padding: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Time to Finality</h1>
+            <span class="network-badge">{{ network }}</span>
+        </header>
+
+        <div class="card">
+            <h2>Finality Breakdown</h2>
+            <div class="chart-container">
+                <canvas id="finalityChart"></canvas>
+            </div>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #22c55e;"></div>
+                    <span>In-Block</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #e6007a;"></div>
+                    <span>Finalization</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Current Statistics</h2>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value" id="avgInclusion">-</div>
+                    <div class="stat-label">Avg In-Block</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="avgFinalization">-</div>
+                    <div class="stat-label">Avg Finalization</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="sampleCount">-</div>
+                    <div class="stat-label">Samples</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart = null;
+
+        async function fetchData() {
+            try {
+                const response = await fetch('/api/timings');
+                const data = await response.json();
+                return data.reverse(); // oldest first for chart
+            } catch (e) {
+                console.error('Failed to fetch data:', e);
+                return [];
+            }
+        }
+
+        function formatMs(ms) {
+            if (ms >= 1000) {
+                return (ms / 1000).toFixed(1) + 's';
+            }
+            return ms + 'ms';
+        }
+
+        function updateStats(data) {
+            if (data.length === 0) return;
+
+            const avgInclusion = data.reduce((a, b) => a + b.inclusion_ms, 0) / data.length;
+            const avgFinalization = data.reduce((a, b) => a + b.finalization_ms, 0) / data.length;
+
+            document.getElementById('avgInclusion').textContent = formatMs(Math.round(avgInclusion));
+            document.getElementById('avgFinalization').textContent = formatMs(Math.round(avgFinalization));
+            document.getElementById('sampleCount').textContent = data.length;
+        }
+
+        function createChart(data) {
+            const ctx = document.getElementById('finalityChart').getContext('2d');
+
+            const labels = data.map(d => {
+                const date = new Date(d.timestamp);
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            });
+
+            // In-block time (inclusion)
+            const inclusionData = data.map(d => d.inclusion_ms / 1000);
+            // Additional time from inclusion to finalization
+            const finalizationDelta = data.map(d => (d.finalization_ms - d.inclusion_ms) / 1000);
+
+            if (chart) {
+                chart.destroy();
+            }
+
+            chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'In-Block',
+                            data: inclusionData,
+                            backgroundColor: '#22c55e',
+                            borderRadius: 2,
+                        },
+                        {
+                            label: 'To Finalization',
+                            data: finalizationDelta,
+                            backgroundColor: '#e6007a',
+                            borderRadius: 2,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { color: '#262626' },
+                            ticks: { color: '#737373' }
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { color: '#262626' },
+                            ticks: {
+                                color: '#737373',
+                                callback: value => value + 's'
+                            },
+                            title: {
+                                display: true,
+                                text: 'Time (seconds)',
+                                color: '#737373'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.dataset.label + ': ' + ctx.raw.toFixed(2) + 's'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function refresh() {
+            const data = await fetchData();
+            if (data.length > 0) {
+                createChart(data);
+                updateStats(data);
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 30000); // Refresh every 30s
+    </script>
+</body>
+</html>

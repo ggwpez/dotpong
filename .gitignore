@@ -1,3 +1,5 @@
 /target
 .env
 metrics/
+.claude/
+*.db
