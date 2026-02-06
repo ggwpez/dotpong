@@ -141,7 +141,7 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
     let call = subxt::dynamic::tx(
         "System",
         "remark",
-        vec![subxt::dynamic::Value::from_bytes(b"dotpong")],
+        vec![subxt::dynamic::Value::from_bytes(b"")],
     );
 
     let extrinsic = api
