@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <style>
         :root {
             /* Warm Grey Scale */
@@ -74,18 +75,14 @@
         }
 
         header {
-            position: relative;
             text-align: center;
             margin-bottom: 3rem;
         }
 
         .status {
-            position: absolute;
-            top: 0;
-            right: 0;
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.75rem;
             color: var(--color-text-tertiary);
@@ -164,7 +161,7 @@
             display: flex;
             justify-content: space-between;
             align-items: baseline;
-            margin-bottom: 1.5rem;
+            margin-bottom: 0.25rem;
         }
 
         .card h2 {
@@ -263,10 +260,6 @@
 <body>
     <div class="container">
         <header>
-            <div class="status">
-                <div class="status-dot" id="statusDot"></div>
-                <span id="statusText">loading</span>
-            </div>
             <h1>Time to Finality</h1>
             <span class="network-badge">{{ network }}</span>
         </header>
@@ -275,9 +268,9 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Last 24 Hours</h2>
-                    <span class="card-subtitle">raw samples</span>
+                    <span class="status" id="status"><span class="status-dot" id="statusDot"></span> <span id="statusText">loading</span></span>
                 </div>
-                <p class="card-desc">Each data point is an individual <a href="https://assethub-polkadot.subscan.io/account/13agS8R2CsBkKrf6oPdSw8Ex4tjDpCuLJE6fg5wRYvgM8ue5" style="color: var(--color-text-secondary); text-decoration: underline;">test transaction</a> sent to the network</p>
+                <p class="card-desc">Each data point is an individual <a href="https://assethub-polkadot.subscan.io/account/13agS8R2CsBkKrf6oPdSw8Ex4tjDpCuLJE6fg5wRYvgM8ue5" style="color: var(--color-text-secondary); text-decoration: underline;">transaction</a> sent to the live network.</p>
                 <div class="chart-container">
                     <canvas id="hourlyChart"></canvas>
                 </div>
@@ -338,13 +331,12 @@
         </div>
 
         <div class="footer">
-            <p><a href="https://github.com/ggwpez/dotpong" style="color: var(--color-text-tertiary); text-decoration: none;">github.com/ggwpez/dotpong</a></p>
+            <p><a href="https://github.com/ggwpez/dotpong" style="color: var(--color-text-tertiary); text-decoration: none;">Oliver Tale-Yazdi - github.com/ggwpez/dotpong</a></p>
         </div>
     </div>
 
     <script>
         const chartConfig = {
-            type: 'line',
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -354,6 +346,7 @@
                 },
                 scales: {
                     x: {
+                        type: 'time',
                         grid: {
                             color: '#44403c',
                             drawBorder: false
@@ -364,7 +357,8 @@
                                 family: "'JetBrains Mono', monospace",
                                 size: 10
                             },
-                            maxRotation: 0
+                            maxRotation: 0,
+                            autoSkipPadding: 20,
                         },
                         border: { display: false }
                     },
@@ -401,7 +395,7 @@
                         padding: 12,
                         cornerRadius: 8,
                         callbacks: {
-                            label: ctx => ctx.dataset.label + ': ' + ctx.raw.toFixed(1) + 's'
+                            label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + 's'
                         }
                     }
                 }
@@ -412,12 +406,15 @@
             return d['avg_' + field] ?? d[field] ?? 0;
         }
 
-        function createChartData(data, labelFn) {
-            const labels = data.map(labelFn);
-            const sendingData = data.map(d => val(d, 'sending_ms') / 1000);
-            const inclusionData = data.map(d => val(d, 'inclusion_ms') / 1000);
-            const finalizationData = data.map(d => val(d, 'finalization_ms') / 1000);
-            const totalData = data.map(d => (val(d, 'sending_ms') + val(d, 'inclusion_ms') + val(d, 'finalization_ms')) / 1000);
+        function xy(data, field) {
+            return data.map(d => ({ x: d.timestamp, y: val(d, field) / 1000 }));
+        }
+
+        function createChartData(data) {
+            const totalPts = data.map(d => ({
+                x: d.timestamp,
+                y: (val(d, 'sending_ms') + val(d, 'inclusion_ms') + val(d, 'finalization_ms')) / 1000
+            }));
 
             const line = {
                 fill: false,
@@ -428,39 +425,35 @@
             };
 
             return {
-                labels,
                 datasets: [
-                    {
-                        label: 'Total',
-                        data: totalData,
-                        borderColor: '#fafaf9',
-                        ...line,
-                    },
-                    {
-                        label: 'Finalization',
-                        data: finalizationData,
-                        borderColor: '#a8a29e',
-                        ...line,
-                    },
-                    {
-                        label: 'In-Block',
-                        data: inclusionData,
-                        borderColor: '#78716c',
-                        ...line,
-                    },
-                    {
-                        label: 'Sending',
-                        data: sendingData,
-                        borderColor: '#44403c',
-                        ...line,
-                    },
+                    { label: 'Total', data: totalPts, borderColor: '#fafaf9', ...line },
+                    { label: 'Finalization', data: xy(data, 'finalization_ms'), borderColor: '#a8a29e', ...line },
+                    { label: 'In-Block', data: xy(data, 'inclusion_ms'), borderColor: '#78716c', ...line },
+                    { label: 'Sending', data: xy(data, 'sending_ms'), borderColor: '#44403c', ...line },
                 ]
             };
         }
 
         let charts = {};
 
-        async function loadChart(id, endpoint, labelFn) {
+        function makeConfig(timeUnit, data) {
+            return {
+                type: 'line',
+                data: createChartData(data),
+                options: {
+                    ...chartConfig.options,
+                    scales: {
+                        ...chartConfig.options.scales,
+                        x: {
+                            ...chartConfig.options.scales.x,
+                            time: { unit: timeUnit },
+                        },
+                    },
+                },
+            };
+        }
+
+        async function loadChart(id, endpoint, timeUnit) {
             const response = await fetch(endpoint);
             const data = await response.json();
 
@@ -469,23 +462,8 @@
             }
 
             const ctx = document.getElementById(id).getContext('2d');
-            charts[id] = new Chart(ctx, {
-                ...chartConfig,
-                data: createChartData(data, labelFn)
-            });
-        }
-
-        function formatHour(d) {
-            return new Date(d.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        }
-
-        function formatDay(d) {
-            return new Date(d.timestamp).toLocaleDateString([], { weekday: 'short', day: 'numeric' });
-        }
-
-        function formatWeek(d) {
-            const start = new Date(d.timestamp);
-            return start.toLocaleDateString([], { month: 'short', day: 'numeric' });
+            charts[id] = new Chart(ctx, makeConfig(timeUnit, data));
+            return data;
         }
 
         function updateStatus(data) {
@@ -514,25 +492,16 @@
         }
 
         async function refresh() {
-            const hourlyRes = await fetch('/api/hourly');
-            const hourlyData = await hourlyRes.json();
-            updateStatus(hourlyData);
-
-            if (charts['hourlyChart']) charts['hourlyChart'].destroy();
-            const ctx = document.getElementById('hourlyChart').getContext('2d');
-            charts['hourlyChart'] = new Chart(ctx, {
-                ...chartConfig,
-                data: createChartData(hourlyData, formatHour)
-            });
-
-            await Promise.all([
-                loadChart('dailyChart', '/api/daily', formatDay),
-                loadChart('weeklyChart', '/api/weekly', formatWeek),
+            const [hourlyData] = await Promise.all([
+                loadChart('hourlyChart', '/api/hourly', 'hour'),
+                loadChart('dailyChart', '/api/daily', 'day'),
+                loadChart('weeklyChart', '/api/weekly', 'week'),
             ]);
+            updateStatus(hourlyData);
         }
 
         refresh();
-        setInterval(refresh, 60000);
+        setInterval(refresh, 300000);
     </script>
 </body>
 </html>
