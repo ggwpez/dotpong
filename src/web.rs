@@ -11,10 +11,12 @@ use rusqlite::Connection;
 use std::sync::Mutex;
 
 use crate::data::{get_daily, get_hourly, get_weekly, AggregatedTiming, TxTiming};
+use crate::logs::{InMemoryLogger, LogEntry};
 
 pub struct AppState {
     pub db: Mutex<Connection>,
     pub network: String,
+    pub logger: &'static InMemoryLogger,
 }
 
 #[derive(Template)]
@@ -29,6 +31,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/hourly", get(api_hourly))
         .route("/api/daily", get(api_daily))
         .route("/api/weekly", get(api_weekly))
+        .route("/api/logs", get(api_logs))
         .with_state(state)
 }
 
@@ -52,6 +55,10 @@ async fn api_daily(State(state): State<Arc<AppState>>) -> Json<Vec<AggregatedTim
 async fn api_weekly(State(state): State<Arc<AppState>>) -> Json<Vec<AggregatedTiming>> {
     let db = state.db.lock().unwrap();
     Json(get_weekly(&db).unwrap_or_default())
+}
+
+async fn api_logs(State(state): State<Arc<AppState>>) -> Json<Vec<LogEntry>> {
+    Json(state.logger.entries())
 }
 
 pub async fn serve(state: Arc<AppState>, port: u16) -> anyhow::Result<()> {

@@ -14,3 +14,6 @@ run network *args:
 
 backfill network *args:
 	cargo run -r -q --bin backfill -- --network {{network}} {{args}}
+
+paseo:
+	cargo run -r -q -- --network paseo-hub --delay 10

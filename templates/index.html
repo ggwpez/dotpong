@@ -249,6 +249,101 @@
             letter-spacing: 0.05em;
         }
 
+        .toggle-btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            letter-spacing: 0.05em;
+            color: var(--color-text-tertiary);
+            background: transparent;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            padding: 0.25rem 0.6rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .toggle-btn:hover {
+            color: var(--color-text-secondary);
+            border-color: var(--color-border-strong);
+        }
+
+        .toggle-btn.active {
+            color: var(--color-text-primary);
+            border-color: var(--color-text-secondary);
+            background: var(--color-surface-secondary);
+        }
+
+        .card-header-right {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logs-panel {
+            display: none;
+            margin-top: 1rem;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            background: var(--color-bg);
+            scrollbar-width: thin;
+            scrollbar-color: var(--grey-700) transparent;
+        }
+
+        .logs-panel.visible {
+            display: block;
+        }
+
+        .log-line {
+            display: flex;
+            gap: 0.75rem;
+            padding: 0.3rem 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            line-height: 1.6;
+            border-bottom: 1px solid var(--color-border);
+            transition: background 0.1s ease;
+        }
+
+        .log-line:last-child {
+            border-bottom: none;
+        }
+
+        .log-line.highlight {
+            background: var(--accent-soft);
+        }
+
+        .log-time {
+            color: var(--color-text-tertiary);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .log-level {
+            white-space: nowrap;
+            flex-shrink: 0;
+            min-width: 3.5em;
+        }
+
+        .log-level.INFO { color: #059669; }
+        .log-level.WARN { color: #d97706; }
+        .log-level.ERROR { color: #dc2626; }
+        .log-level.DEBUG { color: var(--color-text-tertiary); }
+
+        .log-msg {
+            color: var(--color-text-secondary);
+            word-break: break-all;
+        }
+
+        .logs-empty {
+            padding: 1.5rem;
+            text-align: center;
+            color: var(--color-text-tertiary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+        }
+
         @media (prefers-reduced-motion: reduce) {
             * {
                 animation-duration: 0.01ms !important;
@@ -268,12 +363,16 @@
             <div class="card">
                 <div class="card-header">
                     <h2>Last 24 Hours</h2>
-                    <span class="status" id="status"><span class="status-dot" id="statusDot"></span> <span id="statusText">loading</span></span>
+                    <div class="card-header-right">
+                        <button class="toggle-btn" id="logsToggle" onclick="toggleLogs()">logs</button>
+                        <span class="status" id="status"><span class="status-dot" id="statusDot"></span> <span id="statusText">loading</span></span>
+                    </div>
                 </div>
                 <p class="card-desc">Each data point is an individual <a href="https://assethub-polkadot.subscan.io/account/13agS8R2CsBkKrf6oPdSw8Ex4tjDpCuLJE6fg5wRYvgM8ue5" style="color: var(--color-text-secondary); text-decoration: underline;">transaction</a> sent to the live network.</p>
                 <div class="chart-container">
                     <canvas id="hourlyChart"></canvas>
                 </div>
+                <div class="logs-panel" id="logsPanel"></div>
             </div>
 
             <div class="card">
@@ -435,6 +534,83 @@
         }
 
         let charts = {};
+        let logsData = [];
+        let logsVisible = false;
+
+        function toggleLogs() {
+            logsVisible = !logsVisible;
+            const panel = document.getElementById('logsPanel');
+            const btn = document.getElementById('logsToggle');
+            panel.classList.toggle('visible', logsVisible);
+            btn.classList.toggle('active', logsVisible);
+            if (logsVisible && logsData.length === 0) {
+                fetchLogs();
+            }
+        }
+
+        async function fetchLogs() {
+            const resp = await fetch('/api/logs');
+            logsData = await resp.json();
+            renderLogs();
+        }
+
+        let hourlyTimestamps = [];
+
+        function renderLogs() {
+            const panel = document.getElementById('logsPanel');
+            if (logsData.length === 0) {
+                panel.innerHTML = '<div class="logs-empty">no logs yet</div>';
+                return;
+            }
+            panel.innerHTML = logsData.map((log, i) => {
+                const t = new Date(log.timestamp);
+                const ts = t.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                return `<div class="log-line" data-ts="${log.timestamp}" id="log-${i}" onmouseenter="highlightChartAt(${log.timestamp})" onmouseleave="clearChartHighlight()">` +
+                    `<span class="log-time">${ts}</span>` +
+                    `<span class="log-level ${log.level}">${log.level}</span>` +
+                    `<span class="log-msg">${escapeHtml(log.message)}</span>` +
+                    `</div>`;
+            }).join('');
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function highlightChartAt(timestamp) {
+            const chart = charts['hourlyChart'];
+            if (!chart || hourlyTimestamps.length === 0) return;
+
+            // find closest data point index
+            let best = 0;
+            let bestDist = Math.abs(hourlyTimestamps[0] - timestamp);
+            for (let i = 1; i < hourlyTimestamps.length; i++) {
+                const dist = Math.abs(hourlyTimestamps[i] - timestamp);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = i;
+                }
+            }
+
+            chart.tooltip.setActiveElements(
+                chart.data.datasets.map((_, di) => ({ datasetIndex: di, index: best })),
+                { x: 0, y: 0 }
+            );
+            chart.setActiveElements(
+                chart.data.datasets.map((_, di) => ({ datasetIndex: di, index: best }))
+            );
+            chart.update('none');
+        }
+
+        function clearChartHighlight() {
+            const chart = charts['hourlyChart'];
+            if (!chart) return;
+            chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+            chart.setActiveElements([]);
+            chart.update('none');
+        }
 
         function makeConfig(timeUnit, data) {
             return {
@@ -463,6 +639,11 @@
 
             const ctx = document.getElementById(id).getContext('2d');
             charts[id] = new Chart(ctx, makeConfig(timeUnit, data));
+
+            if (id === 'hourlyChart') {
+                hourlyTimestamps = data.map(d => d.timestamp);
+            }
+
             return data;
         }
 
@@ -496,6 +677,7 @@
                 loadChart('hourlyChart', '/api/hourly', 'hour'),
                 loadChart('dailyChart', '/api/daily', 'day'),
                 loadChart('weeklyChart', '/api/weekly', 'week'),
+                fetchLogs(),
             ]);
             updateStatus(hourlyData);
         }

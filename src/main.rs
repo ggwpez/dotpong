@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use core::str::FromStr;
 use dotpong::data::{init_database, store_timing, TxTiming};
+use dotpong::logs::InMemoryLogger;
 use dotpong::web;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -43,7 +44,7 @@ struct NetworkConfig {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logging();
+    let logger = InMemoryLogger::init();
 
     let args = Args::parse();
     let config = load_config()?;
@@ -55,6 +56,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(web::AppState {
         db: Mutex::new(db),
         network: args.network.clone(),
+        logger,
     });
 
     log::info!(
@@ -116,7 +118,7 @@ async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Resul
     let mut last_error = None;
 
     for (i, rpc) in endpoints.iter().enumerate() {
-        log::info!("Trying RPC endpoint {}/{}: {}", i + 1, endpoints.len(), rpc);
+        log::debug!("Trying RPC endpoint {}/{}: {}", i + 1, endpoints.len(), rpc);
 
         match send_tx(rpc, keypair).await {
             Ok(timing) => return Ok(timing),
@@ -150,7 +152,7 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
         .await
         .context("Failed to create signed transaction")?;
 
-    log::info!(
+    log::debug!(
         "Submitting tx from {}",
         keypair.public_key().to_account_id()
     );
@@ -160,7 +162,7 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
         .await
         .context("Failed to submit transaction")?;
     let sending_elapsed = start.elapsed();
-    log::info!("Sending took {}ms (connect + sign + submit)", sending_elapsed.as_millis());
+    log::debug!("Sending took {}ms (connect + sign + submit)", sending_elapsed.as_millis());
 
     let mut inclusion_at = None;
     let mut finalization_at = None;
@@ -170,12 +172,12 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
             InBestBlock(_) => {
                 if inclusion_at.is_none() {
                     inclusion_at = Some(start.elapsed());
-                    log::info!("Included in best block after {}ms", inclusion_at.unwrap().as_millis());
+                    log::debug!("Included in best block after {}ms", inclusion_at.unwrap().as_millis());
                 }
             }
             InFinalizedBlock(_) => {
                 finalization_at = Some(start.elapsed());
-                log::info!("Finalized after {}ms", finalization_at.unwrap().as_millis());
+                log::debug!("Finalized after {}ms", finalization_at.unwrap().as_millis());
                 break;
             }
             Validated | Broadcasted { .. } | NoLongerInBestBlock => {}
@@ -234,13 +236,6 @@ impl AlignedTicker {
             .unwrap()
             .as_secs()
     }
-}
-
-fn init_logging() {
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "info");
-    }
-    env_logger::init();
 }
 
 fn load_config() -> Result<Config> {
