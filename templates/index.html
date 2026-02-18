@@ -562,7 +562,7 @@
                 panel.innerHTML = '<div class="logs-empty">no logs yet</div>';
                 return;
             }
-            panel.innerHTML = logsData.map((log, i) => {
+            panel.innerHTML = [...logsData].reverse().map((log, i) => {
                 const t = new Date(log.timestamp);
                 const ts = t.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                 return `<div class="log-line" data-ts="${log.timestamp}" id="log-${i}" onmouseenter="highlightChartAt(${log.timestamp})" onmouseleave="clearChartHighlight()">` +
