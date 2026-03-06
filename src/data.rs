@@ -3,28 +3,42 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
-/// Timing data from a single transaction.
-/// All durations are segments (not cumulative):
-///   total = sending_ms + inclusion_ms + finalization_ms
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TxTiming {
-    /// Unix timestamp in milliseconds when measurement started
+pub struct TxResult {
     pub timestamp: i64,
-    /// Time for RPC connect + tx signing + submit_and_watch
-    pub sending_ms: u64,
-    /// Time from submission to included in best block
-    pub inclusion_ms: u64,
-    /// Time from in-block to finalized
-    pub finalization_ms: u64,
+    #[serde(flatten)]
+    pub payload: TxPayload,
 }
 
-impl TxTiming {
-    pub fn new(sending_ms: u64, inclusion_ms: u64, finalization_ms: u64) -> Self {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum TxPayload {
+    Ok {
+        sending_ms: u64,
+        inclusion_ms: u64,
+        finalization_ms: u64,
+    },
+    Err {
+        error: String,
+    },
+}
+
+impl TxResult {
+    pub fn ok(sending_ms: u64, inclusion_ms: u64, finalization_ms: u64) -> Self {
         Self {
             timestamp: unix_ms(),
-            sending_ms,
-            inclusion_ms,
-            finalization_ms,
+            payload: TxPayload::Ok {
+                sending_ms,
+                inclusion_ms,
+                finalization_ms,
+            },
+        }
+    }
+
+    pub fn err(error: String) -> Self {
+        Self {
+            timestamp: unix_ms(),
+            payload: TxPayload::Err { error },
         }
     }
 }
@@ -46,6 +60,17 @@ pub fn init_database(network: &str) -> Result<Connection> {
     )
     .context("Failed to create timings table")?;
 
+    // Add error column idempotently
+    match conn.execute("ALTER TABLE timings ADD COLUMN error TEXT", []) {
+        Ok(_) => log::info!("Added 'error' column to timings table"),
+        Err(e) => {
+            let msg = e.to_string();
+            if !msg.contains("duplicate column") {
+                return Err(e).context("Failed to add error column");
+            }
+        }
+    }
+
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM timings", [], |row| row.get(0))
         .unwrap_or(0);
@@ -54,12 +79,25 @@ pub fn init_database(network: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-pub fn store_timing(conn: &Connection, timing: &TxTiming) -> Result<()> {
-    conn.execute(
-        "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms) VALUES (?1, ?2, ?3, ?4)",
-        [timing.timestamp, timing.sending_ms as i64, timing.inclusion_ms as i64, timing.finalization_ms as i64],
-    )
-    .context("Failed to insert timing")?;
+pub fn store_result(conn: &Connection, result: &TxResult) -> Result<()> {
+    match &result.payload {
+        TxPayload::Ok {
+            sending_ms,
+            inclusion_ms,
+            finalization_ms,
+        } => {
+            conn.execute(
+                "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms, error) VALUES (?1, ?2, ?3, ?4, NULL)",
+                [result.timestamp, *sending_ms as i64, *inclusion_ms as i64, *finalization_ms as i64],
+            )?;
+        }
+        TxPayload::Err { error } => {
+            conn.execute(
+                "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms, error) VALUES (?1, 0, 0, 0, ?2)",
+                rusqlite::params![result.timestamp, error],
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -71,32 +109,39 @@ pub struct AggregatedTiming {
     pub avg_inclusion_ms: u64,
     pub avg_finalization_ms: u64,
     pub sample_count: u32,
+    pub error_count: u32,
 }
 
 /// Get raw data points for the last 24 hours
-pub fn get_hourly(conn: &Connection) -> Result<Vec<TxTiming>> {
+pub fn get_hourly(conn: &Connection) -> Result<Vec<TxResult>> {
     let now = unix_ms();
     let start = now - (24 * 60 * 60 * 1000);
 
     let mut stmt = conn.prepare(
-        "SELECT timestamp, sending_ms, inclusion_ms, finalization_ms
+        "SELECT timestamp, sending_ms, inclusion_ms, finalization_ms, error
          FROM timings
          WHERE timestamp >= ?1
          ORDER BY timestamp ASC"
     )?;
 
-    let timings = stmt
+    let results = stmt
         .query_map([start], |row| {
-            Ok(TxTiming {
-                timestamp: row.get(0)?,
-                sending_ms: row.get::<_, i64>(1)? as u64,
-                inclusion_ms: row.get::<_, i64>(2)? as u64,
-                finalization_ms: row.get::<_, i64>(3)? as u64,
-            })
+            let timestamp: i64 = row.get(0)?;
+            let error: Option<String> = row.get(4)?;
+            let payload = if let Some(err) = error {
+                TxPayload::Err { error: err }
+            } else {
+                TxPayload::Ok {
+                    sending_ms: row.get::<_, i64>(1)? as u64,
+                    inclusion_ms: row.get::<_, i64>(2)? as u64,
+                    finalization_ms: row.get::<_, i64>(3)? as u64,
+                }
+            };
+            Ok(TxResult { timestamp, payload })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(timings)
+    Ok(results)
 }
 
 /// Get daily aggregates for the last 7 days
@@ -121,10 +166,11 @@ fn get_aggregated(conn: &Connection, start: i64, bucket_ms: i64) -> Result<Vec<A
     let mut stmt = conn.prepare(
         "SELECT
             (timestamp / ?1) * ?1 as bucket,
-            AVG(sending_ms) as avg_send,
-            AVG(inclusion_ms) as avg_inc,
-            AVG(finalization_ms) as avg_fin,
-            COUNT(*) as cnt
+            AVG(CASE WHEN error IS NULL THEN sending_ms END) as avg_send,
+            AVG(CASE WHEN error IS NULL THEN inclusion_ms END) as avg_inc,
+            AVG(CASE WHEN error IS NULL THEN finalization_ms END) as avg_fin,
+            SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) as ok_cnt,
+            SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as err_cnt
          FROM timings
          WHERE timestamp >= ?2
          GROUP BY bucket
@@ -135,10 +181,11 @@ fn get_aggregated(conn: &Connection, start: i64, bucket_ms: i64) -> Result<Vec<A
         .query_map([bucket_ms, start], |row| {
             Ok(AggregatedTiming {
                 timestamp: row.get(0)?,
-                avg_sending_ms: row.get::<_, f64>(1)? as u64,
-                avg_inclusion_ms: row.get::<_, f64>(2)? as u64,
-                avg_finalization_ms: row.get::<_, f64>(3)? as u64,
+                avg_sending_ms: row.get::<_, Option<f64>>(1)?.unwrap_or(0.0) as u64,
+                avg_inclusion_ms: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0) as u64,
+                avg_finalization_ms: row.get::<_, Option<f64>>(3)?.unwrap_or(0.0) as u64,
                 sample_count: row.get(4)?,
+                error_count: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -146,7 +193,7 @@ fn get_aggregated(conn: &Connection, start: i64, bucket_ms: i64) -> Result<Vec<A
     Ok(timings)
 }
 
-fn unix_ms() -> i64 {
+pub fn unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

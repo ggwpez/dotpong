@@ -10,7 +10,7 @@ use axum::{
 use rusqlite::Connection;
 use std::sync::Mutex;
 
-use crate::data::{get_daily, get_hourly, get_weekly, AggregatedTiming, TxTiming};
+use crate::data::{get_daily, get_hourly, get_weekly, AggregatedTiming, TxResult};
 use crate::logs::{InMemoryLogger, LogEntry};
 
 pub struct AppState {
@@ -42,7 +42,7 @@ async fn index(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Html(template.render().unwrap_or_default())
 }
 
-async fn api_hourly(State(state): State<Arc<AppState>>) -> Json<Vec<TxTiming>> {
+async fn api_hourly(State(state): State<Arc<AppState>>) -> Json<Vec<TxResult>> {
     let db = state.db.lock().unwrap();
     Json(get_hourly(&db).unwrap_or_default())
 }

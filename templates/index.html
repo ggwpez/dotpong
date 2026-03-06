@@ -427,6 +427,13 @@
                 </div>
                 <span class="legend-desc">RPC connect, tx signing, and submission</span>
             </div>
+            <div class="legend-item">
+                <div class="legend-label">
+                    <div class="legend-color" style="background: #dc2626;"></div>
+                    <span>Error</span>
+                </div>
+                <span class="legend-desc">Failed measurement</span>
+            </div>
         </div>
 
         <div class="footer">
@@ -494,7 +501,13 @@
                         padding: 12,
                         cornerRadius: 8,
                         callbacks: {
-                            label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + 's'
+                            label: ctx => {
+                                if (ctx.dataset.label === 'Error') {
+                                    const err = ctx.raw._error || 'Unknown error';
+                                    return 'Error: ' + err;
+                                }
+                                return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + 's';
+                            }
                         }
                     }
                 }
@@ -510,7 +523,10 @@
         }
 
         function createChartData(data) {
-            const totalPts = data.map(d => ({
+            const okData = data.filter(d => d.type === 'Ok');
+            const errData = data.filter(d => d.type === 'Err');
+
+            const totalPts = okData.map(d => ({
                 x: d.timestamp,
                 y: (val(d, 'sending_ms') + val(d, 'inclusion_ms') + val(d, 'finalization_ms')) / 1000
             }));
@@ -523,14 +539,28 @@
                 borderWidth: 2,
             };
 
-            return {
-                datasets: [
-                    { label: 'Total', data: totalPts, borderColor: '#fafaf9', ...line },
-                    { label: 'Finalization', data: xy(data, 'finalization_ms'), borderColor: '#a8a29e', ...line },
-                    { label: 'In-Block', data: xy(data, 'inclusion_ms'), borderColor: '#78716c', ...line },
-                    { label: 'Sending', data: xy(data, 'sending_ms'), borderColor: '#44403c', ...line },
-                ]
-            };
+            const datasets = [
+                { label: 'Total', data: totalPts, borderColor: '#fafaf9', ...line },
+                { label: 'Finalization', data: xy(okData, 'finalization_ms'), borderColor: '#a8a29e', ...line },
+                { label: 'In-Block', data: xy(okData, 'inclusion_ms'), borderColor: '#78716c', ...line },
+                { label: 'Sending', data: xy(okData, 'sending_ms'), borderColor: '#44403c', ...line },
+            ];
+
+            if (errData.length > 0) {
+                datasets.push({
+                    label: 'Error',
+                    data: errData.map(d => ({ x: d.timestamp, y: 60, _error: d.error })),
+                    borderColor: '#dc2626',
+                    pointBackgroundColor: '#dc2626',
+                    pointBorderColor: '#dc2626',
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    showLine: false,
+                    pointStyle: 'crossRot',
+                });
+            }
+
+            return { datasets };
         }
 
         let charts = {};
@@ -594,12 +624,15 @@
                 }
             }
 
+            const timingDatasets = chart.data.datasets
+                .map((ds, di) => ({ ds, di }))
+                .filter(({ ds }) => ds.label !== 'Error');
             chart.tooltip.setActiveElements(
-                chart.data.datasets.map((_, di) => ({ datasetIndex: di, index: best })),
+                timingDatasets.map(({ di }) => ({ datasetIndex: di, index: best })),
                 { x: 0, y: 0 }
             );
             chart.setActiveElements(
-                chart.data.datasets.map((_, di) => ({ datasetIndex: di, index: best }))
+                timingDatasets.map(({ di }) => ({ datasetIndex: di, index: best }))
             );
             chart.update('none');
         }
@@ -641,7 +674,7 @@
             charts[id] = new Chart(ctx, makeConfig(timeUnit, data));
 
             if (id === 'hourlyChart') {
-                hourlyTimestamps = data.map(d => d.timestamp);
+                hourlyTimestamps = data.filter(d => d.type === 'Ok').map(d => d.timestamp);
             }
 
             return data;

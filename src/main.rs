@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use core::str::FromStr;
-use dotpong::data::{init_database, store_timing, TxTiming};
+use dotpong::data::{init_database, store_result, TxResult};
 use dotpong::logs::InMemoryLogger;
 use dotpong::web;
 use serde::Deserialize;
@@ -79,20 +79,25 @@ async fn main() -> Result<()> {
 
             match measure_with_failover(&endpoints, &keypair).await {
                 Ok(timing) => {
-                    log::info!(
-                        "Measurement: sending={}ms, inclusion={}ms, finalization={}ms, total={}ms",
-                        timing.sending_ms,
-                        timing.inclusion_ms,
-                        timing.finalization_ms,
-                        timing.sending_ms + timing.inclusion_ms + timing.finalization_ms
-                    );
+                    if let dotpong::data::TxPayload::Ok { sending_ms, inclusion_ms, finalization_ms } = &timing.payload {
+                        log::info!(
+                            "Measurement: sending={}ms, inclusion={}ms, finalization={}ms, total={}ms",
+                            sending_ms, inclusion_ms, finalization_ms,
+                            sending_ms + inclusion_ms + finalization_ms
+                        );
+                    }
                     let db = collector_state.db.lock().unwrap();
-                    if let Err(e) = store_timing(&db, &timing) {
-                        log::error!("Failed to store timing: {e}");
+                    if let Err(e) = store_result(&db, &timing) {
+                        log::error!("Failed to store result: {e}");
                     }
                 }
                 Err(e) => {
                     log::error!("All RPC endpoints failed: {e}");
+                    let entry = TxResult::err(format!("{e}"));
+                    let db = collector_state.db.lock().unwrap();
+                    if let Err(e) = store_result(&db, &entry) {
+                        log::error!("Failed to store error result: {e}");
+                    }
                 }
             }
 
@@ -114,7 +119,7 @@ fn get_network<'a>(config: &'a Config, network: &str) -> Result<&'a NetworkConfi
 }
 
 /// Try each RPC endpoint in order until one succeeds
-async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Result<TxTiming> {
+async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Result<TxResult> {
     let mut last_error = None;
 
     for (i, rpc) in endpoints.iter().enumerate() {
@@ -132,13 +137,21 @@ async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Resul
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No RPC endpoints configured")))
 }
 
+async fn with_timeout<T>(secs: u64, step: &str, fut: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+    tokio::time::timeout(Duration::from_secs(secs), fut)
+        .await
+        .map_err(|_| anyhow::anyhow!("{step}: timed out after {secs}s"))?
+}
+
 /// Send a transaction and measure all timing segments
-async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
+async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxResult> {
     let start = Instant::now();
 
-    let api = OnlineClient::<SubstrateConfig>::from_url(rpc)
-        .await
-        .context("Failed to connect to RPC")?;
+    let api = with_timeout(60, "RPC connect", async {
+        OnlineClient::<SubstrateConfig>::from_url(rpc)
+            .await
+            .context("Failed to connect to RPC")
+    }).await?;
 
     let call = subxt::dynamic::tx(
         "System",
@@ -146,46 +159,52 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
         vec![subxt::dynamic::Value::from_bytes(b"")],
     );
 
-    let extrinsic = api
-        .tx()
-        .create_signed(&call, keypair, Default::default())
-        .await
-        .context("Failed to create signed transaction")?;
+    let extrinsic = with_timeout(60, "Sign transaction", async {
+        api.tx()
+            .create_signed(&call, keypair, Default::default())
+            .await
+            .context("Failed to create signed transaction")
+    }).await?;
 
     log::debug!(
         "Submitting tx from {}",
         keypair.public_key().to_account_id()
     );
 
-    let mut subscription = extrinsic
-        .submit_and_watch()
-        .await
-        .context("Failed to submit transaction")?;
+    let mut subscription = with_timeout(60, "Submit transaction", async {
+        extrinsic
+            .submit_and_watch()
+            .await
+            .context("Failed to submit transaction")
+    }).await?;
     let sending_elapsed = start.elapsed();
     log::debug!("Sending took {}ms (connect + sign + submit)", sending_elapsed.as_millis());
 
     let mut inclusion_at = None;
     let mut finalization_at = None;
 
-    while let Some(status) = subscription.next().await {
-        match status.context("Transaction status error")? {
-            InBestBlock(_) => {
-                if inclusion_at.is_none() {
-                    inclusion_at = Some(start.elapsed());
-                    log::debug!("Included in best block after {}ms", inclusion_at.unwrap().as_millis());
+    with_timeout(60, "Wait for finalization", async {
+        while let Some(status) = subscription.next().await {
+            match status.context("Transaction status error")? {
+                InBestBlock(_) => {
+                    if inclusion_at.is_none() {
+                        inclusion_at = Some(start.elapsed());
+                        log::debug!("Included in best block after {}ms", inclusion_at.unwrap().as_millis());
+                    }
+                }
+                InFinalizedBlock(_) => {
+                    finalization_at = Some(start.elapsed());
+                    log::debug!("Finalized after {}ms", finalization_at.unwrap().as_millis());
+                    break;
+                }
+                Validated | Broadcasted { .. } | NoLongerInBestBlock => {}
+                status => {
+                    log::warn!("Unexpected status: {:?}", status);
                 }
             }
-            InFinalizedBlock(_) => {
-                finalization_at = Some(start.elapsed());
-                log::debug!("Finalized after {}ms", finalization_at.unwrap().as_millis());
-                break;
-            }
-            Validated | Broadcasted { .. } | NoLongerInBestBlock => {}
-            status => {
-                log::warn!("Unexpected status: {:?}", status);
-            }
         }
-    }
+        Ok(())
+    }).await?;
 
     let finalization_at = finalization_at.context("Transaction was not finalized")?;
     let inclusion_at = inclusion_at.unwrap_or(finalization_at);
@@ -195,7 +214,7 @@ async fn send_tx(rpc: &str, keypair: &Keypair) -> Result<TxTiming> {
     let inclusion_ms = (inclusion_at - sending_elapsed).as_millis() as u64;
     let finalization_ms = (finalization_at - inclusion_at).as_millis() as u64;
 
-    Ok(TxTiming::new(sending_ms, inclusion_ms, finalization_ms))
+    Ok(TxResult::ok(sending_ms, inclusion_ms, finalization_ms))
 }
 
 /// Tick scheduler aligned to unix epoch multiples of a given interval.
