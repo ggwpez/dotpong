@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use dotpong::data::{init_database, store_result, unix_ms, TxPayload, TxResult};
+use dotpong::data::{init_database, store_result, unix_ms, TxResult};
 use rand::Rng;
 
 #[derive(Parser)]
@@ -43,26 +43,26 @@ fn main() -> Result<()> {
             // ~5% error entries
             errors += 1;
             let errors_pool = [
-                "Connection timeout after 30s",
+                "RPC connect: timed out after 60s",
                 "RPC error: -32000 Transaction pool is full",
                 "WebSocket connection closed unexpectedly",
-                "Transaction was not finalized within 120s",
+                "Wait for finalization: timed out after 60s",
                 "All RPC endpoints failed: connection refused",
             ];
             TxResult {
                 timestamp,
-                payload: TxPayload::Err {
-                    error: errors_pool[rng.gen_range(0..errors_pool.len())].to_string(),
-                },
+                sending_ms: 0,
+                inclusion_ms: 0,
+                finalization_ms: 0,
+                error: Some(errors_pool[rng.gen_range(0..errors_pool.len())].to_string()),
             }
         } else {
             TxResult {
                 timestamp,
-                payload: TxPayload::Ok {
-                    sending_ms: rng.gen_range(100..=500),
-                    inclusion_ms: rng.gen_range(1000..=5000),
-                    finalization_ms: rng.gen_range(10000..=50000),
-                },
+                sending_ms: rng.gen_range(100..=500),
+                inclusion_ms: rng.gen_range(1000..=5000),
+                finalization_ms: rng.gen_range(10000..=50000),
+                error: None,
             }
         };
 

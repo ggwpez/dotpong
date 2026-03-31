@@ -6,39 +6,31 @@ use std::time::SystemTime;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxResult {
     pub timestamp: i64,
-    #[serde(flatten)]
-    pub payload: TxPayload,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum TxPayload {
-    Ok {
-        sending_ms: u64,
-        inclusion_ms: u64,
-        finalization_ms: u64,
-    },
-    Err {
-        error: String,
-    },
+    pub sending_ms: u64,
+    pub inclusion_ms: u64,
+    pub finalization_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl TxResult {
     pub fn ok(sending_ms: u64, inclusion_ms: u64, finalization_ms: u64) -> Self {
         Self {
             timestamp: unix_ms(),
-            payload: TxPayload::Ok {
-                sending_ms,
-                inclusion_ms,
-                finalization_ms,
-            },
+            sending_ms,
+            inclusion_ms,
+            finalization_ms,
+            error: None,
         }
     }
 
     pub fn err(error: String) -> Self {
         Self {
             timestamp: unix_ms(),
-            payload: TxPayload::Err { error },
+            sending_ms: 0,
+            inclusion_ms: 0,
+            finalization_ms: 0,
+            error: Some(error),
         }
     }
 }
@@ -80,24 +72,16 @@ pub fn init_database(network: &str) -> Result<Connection> {
 }
 
 pub fn store_result(conn: &Connection, result: &TxResult) -> Result<()> {
-    match &result.payload {
-        TxPayload::Ok {
-            sending_ms,
-            inclusion_ms,
-            finalization_ms,
-        } => {
-            conn.execute(
-                "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms, error) VALUES (?1, ?2, ?3, ?4, NULL)",
-                [result.timestamp, *sending_ms as i64, *inclusion_ms as i64, *finalization_ms as i64],
-            )?;
-        }
-        TxPayload::Err { error } => {
-            conn.execute(
-                "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms, error) VALUES (?1, 0, 0, 0, ?2)",
-                rusqlite::params![result.timestamp, error],
-            )?;
-        }
-    }
+    conn.execute(
+        "INSERT INTO timings (timestamp, sending_ms, inclusion_ms, finalization_ms, error) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            result.timestamp,
+            result.sending_ms as i64,
+            result.inclusion_ms as i64,
+            result.finalization_ms as i64,
+            result.error,
+        ],
+    )?;
     Ok(())
 }
 
@@ -126,18 +110,13 @@ pub fn get_hourly(conn: &Connection) -> Result<Vec<TxResult>> {
 
     let results = stmt
         .query_map([start], |row| {
-            let timestamp: i64 = row.get(0)?;
-            let error: Option<String> = row.get(4)?;
-            let payload = if let Some(err) = error {
-                TxPayload::Err { error: err }
-            } else {
-                TxPayload::Ok {
-                    sending_ms: row.get::<_, i64>(1)? as u64,
-                    inclusion_ms: row.get::<_, i64>(2)? as u64,
-                    finalization_ms: row.get::<_, i64>(3)? as u64,
-                }
-            };
-            Ok(TxResult { timestamp, payload })
+            Ok(TxResult {
+                timestamp: row.get(0)?,
+                sending_ms: row.get::<_, i64>(1)? as u64,
+                inclusion_ms: row.get::<_, i64>(2)? as u64,
+                finalization_ms: row.get::<_, i64>(3)? as u64,
+                error: row.get(4)?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 

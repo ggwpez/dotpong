@@ -78,16 +78,18 @@ async fn main() -> Result<()> {
             ticker.wait().await;
 
             match measure_with_failover(&endpoints, &keypair).await {
-                Ok(timing) => {
-                    if let dotpong::data::TxPayload::Ok { sending_ms, inclusion_ms, finalization_ms } = &timing.payload {
+                Ok(result) => {
+                    if let Some(ref err) = result.error {
+                        log::error!("Measurement failed: {err}");
+                    } else {
                         log::info!(
                             "Measurement: sending={}ms, inclusion={}ms, finalization={}ms, total={}ms",
-                            sending_ms, inclusion_ms, finalization_ms,
-                            sending_ms + inclusion_ms + finalization_ms
+                            result.sending_ms, result.inclusion_ms, result.finalization_ms,
+                            result.sending_ms + result.inclusion_ms + result.finalization_ms
                         );
                     }
                     let db = collector_state.db.lock().unwrap();
-                    if let Err(e) = store_result(&db, &timing) {
+                    if let Err(e) = store_result(&db, &result) {
                         log::error!("Failed to store result: {e}");
                     }
                 }

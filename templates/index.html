@@ -523,8 +523,8 @@
         }
 
         function createChartData(data) {
-            const okData = data.filter(d => d.type === 'Ok');
-            const errData = data.filter(d => d.type === 'Err');
+            const okData = data.filter(d => !d.error);
+            const errData = data.filter(d => d.error);
 
             const totalPts = okData.map(d => ({
                 x: d.timestamp,
@@ -674,7 +674,7 @@
             charts[id] = new Chart(ctx, makeConfig(timeUnit, data));
 
             if (id === 'hourlyChart') {
-                hourlyTimestamps = data.filter(d => d.type === 'Ok').map(d => d.timestamp);
+                hourlyTimestamps = data.filter(d => !d.error).map(d => d.timestamp);
             }
 
             return data;
