@@ -17,3 +17,6 @@ backfill network *args:
 
 paseo:
 	cargo run -r -q -- --network paseo-hub --delay 10
+
+fetch-db network:
+	scp server2:/home/vados/dotpong/dotpong-{{network}}.db ./

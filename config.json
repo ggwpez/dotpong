@@ -2,8 +2,6 @@
   "networks": {
     "polkadot-hub": {
       "rpc_endpoints": [
-        "wss://polkadot-asset-hub-rpc.polkadot.io",
-        "wss://sys.ibp.network/asset-hub-polkadot",
         "wss://asset-hub-polkadot-rpc.dwellir.com"
       ]
     },

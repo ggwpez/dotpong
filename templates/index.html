@@ -506,6 +506,9 @@
                                     const err = ctx.raw._error || 'Unknown error';
                                     return 'Error: ' + err;
                                 }
+                                if (ctx.dataset.yAxisID === 'yErrors') {
+                                    return 'Errors: ' + ctx.parsed.y;
+                                }
                                 return ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + 's';
                             }
                         }
@@ -523,6 +526,7 @@
         }
 
         function createChartData(data) {
+            const isAggregated = data.length > 0 && data[0].error_count !== undefined;
             const okData = data.filter(d => !d.error);
             const errData = data.filter(d => d.error);
 
@@ -557,6 +561,17 @@
                     pointHoverRadius: 7,
                     showLine: false,
                     pointStyle: 'crossRot',
+                });
+            }
+
+            if (isAggregated) {
+                datasets.push({
+                    label: 'Errors',
+                    data: data.map(d => ({ x: d.timestamp, y: d.error_count })),
+                    borderColor: '#dc2626',
+                    backgroundColor: '#dc2626',
+                    yAxisID: 'yErrors',
+                    ...line,
                 });
             }
 
@@ -646,18 +661,33 @@
         }
 
         function makeConfig(timeUnit, data) {
+            const isAggregated = data.length > 0 && data[0].error_count !== undefined;
+            const scales = {
+                ...chartConfig.options.scales,
+                x: {
+                    ...chartConfig.options.scales.x,
+                    time: { unit: timeUnit },
+                },
+            };
+            if (isAggregated) {
+                scales.yErrors = {
+                    position: 'right',
+                    beginAtZero: true,
+                    grid: { display: false },
+                    ticks: {
+                        color: '#78716c',
+                        font: { family: "'JetBrains Mono', monospace", size: 10 },
+                        precision: 0,
+                    },
+                    border: { display: false },
+                };
+            }
             return {
                 type: 'line',
                 data: createChartData(data),
                 options: {
                     ...chartConfig.options,
-                    scales: {
-                        ...chartConfig.options.scales,
-                        x: {
-                            ...chartConfig.options.scales.x,
-                            time: { unit: timeUnit },
-                        },
-                    },
+                    scales,
                 },
             };
         }

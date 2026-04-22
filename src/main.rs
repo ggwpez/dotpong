@@ -122,7 +122,7 @@ fn get_network<'a>(config: &'a Config, network: &str) -> Result<&'a NetworkConfi
 
 /// Try each RPC endpoint in order until one succeeds
 async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Result<TxResult> {
-    let mut last_error = None;
+    let mut errors = Vec::new();
 
     for (i, rpc) in endpoints.iter().enumerate() {
         log::debug!("Trying RPC endpoint {}/{}: {}", i + 1, endpoints.len(), rpc);
@@ -131,12 +131,12 @@ async fn measure_with_failover(endpoints: &[String], keypair: &Keypair) -> Resul
             Ok(timing) => return Ok(timing),
             Err(e) => {
                 log::warn!("RPC {} failed: {e}", rpc);
-                last_error = Some(e);
+                errors.push(format!("{rpc}: {e}"));
             }
         }
     }
 
-    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No RPC endpoints configured")))
+    Err(anyhow::anyhow!("{}", errors.join("; ")))
 }
 
 async fn with_timeout<T>(secs: u64, step: &str, fut: impl std::future::Future<Output = Result<T>>) -> Result<T> {
